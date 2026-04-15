@@ -6,6 +6,7 @@ import {
   rerenderWorshipVideo,
   getVideoJob,
   getVideoDownloadUrl,
+  mergeVideoJobStatus,
   type VideoJobStatus,
   type WorshipPlanResponse,
 } from '../../api/client';
@@ -80,9 +81,8 @@ export default function VideoEditor({
     };
   }, [analysisId]);
 
-  // Poll render job status. Depend only on the job_id / active-ness, not the
-  // whole job object — otherwise every tick's setJob would tear down and
-  // rebuild the interval, thrashing the poll cadence.
+  // Depend only on the job_id / active-ness, not the whole job object —
+  // otherwise every tick's setJob would tear down and rebuild the interval.
   const jobId = job?.job_id;
   const shouldPoll =
     !!job && (job.status === 'pending' || job.status === 'processing');
@@ -91,19 +91,7 @@ export default function VideoEditor({
     const id = window.setInterval(async () => {
       try {
         const latest = await getVideoJob(jobId);
-        setJob((prev) => {
-          if (
-            prev &&
-            prev.status === latest.status &&
-            prev.progress === latest.progress &&
-            prev.stage === latest.stage &&
-            prev.video_filename === latest.video_filename &&
-            prev.error === latest.error
-          ) {
-            return prev;
-          }
-          return latest;
-        });
+        setJob((prev) => mergeVideoJobStatus(prev, latest));
         if (latest.status === 'done' && latest.video_filename) {
           onRerendered(latest.video_filename);
           setSubmitting(false);

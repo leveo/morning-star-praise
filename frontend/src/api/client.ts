@@ -216,6 +216,26 @@ export interface VideoJobStatus {
   error?: string | null;
 }
 
+/** Return the previous status object when every displayed field is
+ *  unchanged, so React bails out of the re-render instead of cascading
+ *  updates on every poll tick. */
+export function mergeVideoJobStatus(
+  prev: VideoJobStatus | null,
+  latest: VideoJobStatus,
+): VideoJobStatus {
+  if (
+    prev &&
+    prev.status === latest.status &&
+    prev.progress === latest.progress &&
+    prev.stage === latest.stage &&
+    prev.video_filename === latest.video_filename &&
+    prev.error === latest.error
+  ) {
+    return prev;
+  }
+  return latest;
+}
+
 export interface ExtractedBackground {
   filename: string;
   url: string;
@@ -302,7 +322,7 @@ export interface RerenderRequest {
   lineSpacingMultiplier?: number;
   showPageNumbers?: boolean;
   timingOverrides?: { idx: number; start_sec: number; end_sec: number }[];
-  backgroundOverrides?: { idx: number; background_id?: number; background_url?: string }[];
+  backgroundOverrides?: { idx: number; background_id?: number }[];
 }
 
 export async function rerenderWorshipVideo(

@@ -690,20 +690,32 @@ def identify_stanza_sequence(
     return results
 
 
-def _build_char_curve(
-    lyric_chunks: list[str],
-    whisper_words: list[WhisperWord],
-    audio_duration: float,
-    intro_offset: float,
-) -> tuple["_CharTimeCurve", list[list[str]], list[int]]:
-    """Shared alignment setup — returns the curve plus per-chunk char metadata."""
-    chunk_char_lists = [_meaningful_chars(c) for c in lyric_chunks]
-    chunk_lens = [len(cl) for cl in chunk_char_lists]
-    flat_user_chars: list[str] = [c for cl in chunk_char_lists for c in cl]
-    curve = _CharTimeCurve(
-        whisper_words, flat_user_chars, audio_duration, intro_offset
-    )
-    return curve, chunk_char_lists, chunk_lens
+@dataclass(slots=True)
+class CharCurveCache:
+    """Shared alignment cache — one build per render, reused across callers.
+
+    The curve is O(n²) to construct (SequenceMatcher), so we build it once
+    in the first caller and let siblings reuse it via this cache object.
+    """
+    curve: "_CharTimeCurve | None" = None
+    chunk_char_lists: list[list[str]] | None = None
+    chunk_lens: list[int] | None = None
+
+    def fill(
+        self,
+        lyric_chunks: list[str],
+        whisper_words: list[WhisperWord],
+        audio_duration: float,
+        intro_offset: float,
+    ) -> None:
+        if self.curve is not None:
+            return
+        self.chunk_char_lists = [_meaningful_chars(c) for c in lyric_chunks]
+        self.chunk_lens = [len(cl) for cl in self.chunk_char_lists]
+        flat_user_chars: list[str] = [c for cl in self.chunk_char_lists for c in cl]
+        self.curve = _CharTimeCurve(
+            whisper_words, flat_user_chars, audio_duration, intro_offset
+        )
 
 
 def align_chunks_to_timeline(
@@ -711,34 +723,21 @@ def align_chunks_to_timeline(
     whisper_words: list[WhisperWord],
     audio_duration: float,
     intro_offset: float = 0.0,
-    curve_cache: dict | None = None,
+    curve_cache: CharCurveCache | None = None,
 ) -> list[TimedChunk]:
-    """Map user lyric chunks onto the whisper timeline (chunk-level timing).
+    """Map user lyric chunks onto the whisper timeline.
 
-    Uses text alignment (via ``_CharTimeCurve``) between normalized user
-    lyrics and whisper's char stream so chunk boundaries fire at the moment
-    their first sung character actually starts. ``chunk.end`` equals the
-    next chunk's ``start`` (so the current slide holds through any silence
-    gap); the last chunk extends to ``audio_duration``.
-
-    Pass ``curve_cache={}`` (or an existing dict from a sibling call) to reuse
-    the SequenceMatcher alignment — the curve is O(n²) and would otherwise be
-    rebuilt for every karaoke render.
+    ``chunk.end`` equals the next chunk's ``start`` so the current slide
+    holds through any silence gap; the last chunk extends to
+    ``audio_duration``.
     """
     if not lyric_chunks:
         return []
 
-    if curve_cache is not None and "curve" in curve_cache:
-        curve = curve_cache["curve"]
-        chunk_lens = curve_cache["chunk_lens"]
-    else:
-        curve, _chunk_char_lists, chunk_lens = _build_char_curve(
-            lyric_chunks, whisper_words, audio_duration, intro_offset
-        )
-        if curve_cache is not None:
-            curve_cache["curve"] = curve
-            curve_cache["chunk_char_lists"] = _chunk_char_lists
-            curve_cache["chunk_lens"] = chunk_lens
+    cache = curve_cache or CharCurveCache()
+    cache.fill(lyric_chunks, whisper_words, audio_duration, intro_offset)
+    curve = cache.curve
+    chunk_lens = cache.chunk_lens
 
     results: list[TimedChunk] = []
     cum = 0
@@ -760,35 +759,23 @@ def compute_chunk_units(
     whisper_words: list[WhisperWord],
     audio_duration: float,
     intro_offset: float = 0.0,
-    curve_cache: dict | None = None,
+    curve_cache: CharCurveCache | None = None,
 ) -> list[list[dict]]:
     """For each chunk, return a list of karaoke units {text, startSec, isLineBreak}.
 
     Splitting rules:
-      * ``\\n`` becomes an entry with ``isLineBreak=True`` (no startSec).
-      * Whitespace / punctuation becomes entries with ``startSec=None`` —
-        rendered as-is but not animated (they don't carry alignment info).
-      * Each CJK character becomes its own animated unit.
-      * Each Latin/digit word becomes a single animated unit (the whole word
-        lights up at its first char's start).
-
-    Share ``curve_cache`` with a sibling ``align_chunks_to_timeline`` call to
-    skip the O(n²) SequenceMatcher rebuild.
+      * ``\\n`` → entry with ``isLineBreak=True`` (no startSec).
+      * Whitespace / punctuation → entry with ``startSec=None``.
+      * CJK char → its own animated unit.
+      * Latin/digit word → one unit that lights up at its first char's start.
     """
     if not lyric_chunks:
         return []
 
-    if curve_cache is not None and "curve" in curve_cache:
-        curve = curve_cache["curve"]
-        chunk_char_lists = curve_cache["chunk_char_lists"]
-    else:
-        curve, chunk_char_lists, _chunk_lens = _build_char_curve(
-            lyric_chunks, whisper_words, audio_duration, intro_offset
-        )
-        if curve_cache is not None:
-            curve_cache["curve"] = curve
-            curve_cache["chunk_char_lists"] = chunk_char_lists
-            curve_cache["chunk_lens"] = _chunk_lens
+    cache = curve_cache or CharCurveCache()
+    cache.fill(lyric_chunks, whisper_words, audio_duration, intro_offset)
+    curve = cache.curve
+    chunk_char_lists = cache.chunk_char_lists
 
     base_offsets: list[int] = []
     cum = 0
@@ -1219,12 +1206,11 @@ def _snap_slides_to_gaps(
 
 def finalize_plan_timings(
     plan: AudioPlan,
-    curve_cache: dict | None = None,
+    curve_cache: CharCurveCache | None = None,
 ) -> list[TimedChunk]:
     """Run the char-alignment pass and normalize chunk boundaries.
 
-    Caches the result on ``plan.timed`` — subsequent calls return the cached
-    list so /analyze and /create can share the same SequenceMatcher pass. The
+    Memoizes on ``plan.timed`` so /analyze and /create share one pass. The
     invariant ``chunk[i].end == chunk[i+1].start`` is enforced so Remotion's
     per-slide sequences crossfade back-to-back without exposing the outer
     black background during silence gaps.
@@ -1272,7 +1258,7 @@ def build_video_from_plan(
     work_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    curve_cache: dict = {}
+    curve_cache = CharCurveCache()
     timed = finalize_plan_timings(plan, curve_cache=curve_cache)
 
     karaoke_units: list[list[dict]] | None = None

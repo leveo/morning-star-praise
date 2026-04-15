@@ -224,6 +224,11 @@ def invalidate_cache() -> None:
     _cache = None
 
 
+def build_id_to_path() -> dict[int, Path]:
+    """Single source of truth for ``bg.id -> local path`` resolution."""
+    return {bg.id: settings.BACKGROUNDS_DIR / bg.filename for bg in list_default_backgrounds()}
+
+
 def assign_backgrounds(
     num_slides: int,
     background_ids: list[int] | None = None,
@@ -234,7 +239,6 @@ def assign_backgrounds(
     if not all_bgs:
         return [None] * num_slides
 
-    # Build id->path lookup once
     id_to_path = {bg.id: settings.BACKGROUNDS_DIR / bg.filename for bg in all_bgs}
 
     if background_ids:

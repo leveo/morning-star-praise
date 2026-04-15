@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.services import ppt_extract_service, video_job_service, video_service
-from app.services.background_service import assign_backgrounds, list_default_backgrounds
+from app.services.background_service import assign_backgrounds, build_id_to_path
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -118,6 +118,22 @@ class CachedAnalysis:
     work_dir: Path
 
 
+@dataclass(slots=True)
+class JobSpec:
+    """Everything a render job needs besides the cached analysis."""
+    title: str
+    composer: str
+    background_ids: list[int] | None
+    extracted_bg_paths: list[Path] | None
+    karaoke_mode: bool
+    audio_stem: str
+    primary_font_size: int | None
+    secondary_font_size: int | None
+    line_spacing_multiplier: float | None
+    show_page_numbers: bool
+    bg_path_overrides: dict[int, Path] | None = None
+
+
 def _analysis_dir(analysis_id: str) -> Path:
     """Resolve a safe analysis_id to its on-disk cache directory."""
     if not analysis_id.isalnum():
@@ -167,58 +183,44 @@ def _progress_cb(job_id: str):
     return _cb
 
 
-def _run_job_sync(
-    job_id: str,
-    cached: CachedAnalysis,
-    title: str,
-    composer: str,
-    background_ids: list[int] | None,
-    extracted_bg_paths: list[Path] | None,
-    karaoke_mode: bool,
-    audio_stem: str,
-    primary_font_size: int | None,
-    secondary_font_size: int | None,
-    line_spacing_multiplier: float | None,
-    show_page_numbers: bool,
-    bg_path_overrides: dict[int, Path] | None = None,
-) -> None:
+def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
     try:
         plan = cached.plan
         if not plan.lyric_chunks:
             raise ValueError("Analysis has no slides — re-run Analyze Audio")
 
         num_bg_slots = len(plan.lyric_chunks) + 1
-        if extracted_bg_paths:
+        if spec.extracted_bg_paths:
             bg_paths: list[Path | None] = [
-                extracted_bg_paths[i % len(extracted_bg_paths)]
+                spec.extracted_bg_paths[i % len(spec.extracted_bg_paths)]
                 for i in range(num_bg_slots)
             ]
         else:
             bg_paths = assign_backgrounds(
                 num_slides=num_bg_slots,
-                background_ids=background_ids,
+                background_ids=spec.background_ids,
             )
 
-        if bg_path_overrides:
-            for idx, override_path in bg_path_overrides.items():
+        if spec.bg_path_overrides:
+            for idx, override_path in spec.bg_path_overrides.items():
                 if 0 <= idx < len(bg_paths):
                     bg_paths[idx] = override_path
 
         video_path, srt_path = video_service.build_video_from_plan(
             audio_path=cached.audio_path,
             plan=plan,
-            title=title,
-            composer=composer,
+            title=spec.title,
+            composer=spec.composer,
             background_paths=bg_paths,
             output_dir=settings.OUTPUT_DIR,
             work_dir=cached.work_dir,
             on_progress=_progress_cb(job_id),
-            karaoke_mode=karaoke_mode,
-            output_stem=audio_stem,
-            primary_font_size=primary_font_size,
-            secondary_font_size=secondary_font_size,
-            line_spacing_multiplier=line_spacing_multiplier,
-            show_page_numbers=show_page_numbers,
+            karaoke_mode=spec.karaoke_mode,
+            output_stem=spec.audio_stem,
+            primary_font_size=spec.primary_font_size,
+            secondary_font_size=spec.secondary_font_size,
+            line_spacing_multiplier=spec.line_spacing_multiplier,
+            show_page_numbers=spec.show_page_numbers,
         )
 
         video_job_service.update_job(
@@ -237,42 +239,12 @@ def _run_job_sync(
             )
         except Exception:
             logger.exception("Failed to mark job as failed")
-    # Cache dir is NOT removed here — the Edit Video flow re-uses the same
-    # cached plan for follow-up rerenders. ``_cleanup_old_files`` in
-    # main.py handles TTL expiry.
+    # Cache dir survives for follow-up /rerender calls; TTL eviction happens
+    # in main._cleanup_old_files.
 
 
-async def _run_job_async(
-    job_id: str,
-    cached: CachedAnalysis,
-    title: str,
-    composer: str,
-    background_ids: list[int] | None,
-    extracted_bg_paths: list[Path] | None,
-    karaoke_mode: bool,
-    audio_stem: str,
-    primary_font_size: int | None,
-    secondary_font_size: int | None,
-    line_spacing_multiplier: float | None,
-    show_page_numbers: bool,
-    bg_path_overrides: dict[int, Path] | None = None,
-) -> None:
-    await asyncio.to_thread(
-        _run_job_sync,
-        job_id,
-        cached,
-        title,
-        composer,
-        background_ids,
-        extracted_bg_paths,
-        karaoke_mode,
-        audio_stem,
-        primary_font_size,
-        secondary_font_size,
-        line_spacing_multiplier,
-        show_page_numbers,
-        bg_path_overrides,
-    )
+async def _run_job_async(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
+    await asyncio.to_thread(_run_job_sync, job_id, cached, spec)
 
 
 def _analyze_sync(
@@ -426,22 +398,19 @@ async def create_video(
     job_id = uuid.uuid4().hex
     video_job_service.create_job(job_id, title=title, language=cached.plan.language)
 
-    task = asyncio.create_task(
-        _run_job_async(
-            job_id,
-            cached,
-            title,
-            composer,
-            bg_ids,
-            extracted_bg_paths,
-            karaoke_mode,
-            audio_stem,
-            primary_font_size,
-            secondary_font_size,
-            line_spacing_multiplier,
-            show_page_numbers,
-        )
+    spec = JobSpec(
+        title=title,
+        composer=composer,
+        background_ids=bg_ids,
+        extracted_bg_paths=extracted_bg_paths,
+        karaoke_mode=karaoke_mode,
+        audio_stem=audio_stem,
+        primary_font_size=primary_font_size,
+        secondary_font_size=secondary_font_size,
+        line_spacing_multiplier=line_spacing_multiplier,
+        show_page_numbers=show_page_numbers,
     )
+    task = asyncio.create_task(_run_job_async(job_id, cached, spec))
     _running_tasks.add(task)
     task.add_done_callback(_running_tasks.discard)
 
@@ -588,7 +557,6 @@ class TimingOverride(BaseModel):
 class BackgroundOverride(BaseModel):
     idx: int
     background_id: int | None = None
-    background_url: str | None = None  # for extracted bgs
 
 
 class RerenderRequest(BaseModel):
@@ -632,24 +600,17 @@ async def rerender_video(req: RerenderRequest):
         if resolved:
             extracted_bg_paths = resolved
 
-    # Per-slide BG picks from the Edit Video panel. The editor's ``idx`` is
-    # the lyric chunk index (0..N-1); bg_paths index 0 is the title slide, so
-    # we shift by +1. Title slide overrides would use idx = -1 from the
-    # editor, which we don't currently support.
+    # Editor's ``idx`` is the lyric chunk index (0..N-1). ``bg_paths`` index 0
+    # is the title slide, so chunk-level overrides shift by +1.
     bg_path_overrides: dict[int, Path] | None = None
-    if req.background_overrides:
-        id_to_path = {
-            bg.id: settings.BACKGROUNDS_DIR / bg.filename
-            for bg in list_default_backgrounds()
+    override_ids = {ov.background_id for ov in req.background_overrides if ov.background_id is not None}
+    if override_ids:
+        id_to_path = build_id_to_path()
+        resolved_overrides = {
+            ov.idx + 1: id_to_path[ov.background_id]
+            for ov in req.background_overrides
+            if ov.background_id is not None and ov.background_id in id_to_path
         }
-        resolved_overrides: dict[int, Path] = {}
-        for ov in req.background_overrides:
-            if ov.background_id is None:
-                continue
-            path = id_to_path.get(ov.background_id)
-            if path is None or not path.exists():
-                continue
-            resolved_overrides[ov.idx + 1] = path
         if resolved_overrides:
             bg_path_overrides = resolved_overrides
 
@@ -657,23 +618,20 @@ async def rerender_video(req: RerenderRequest):
     job_id = uuid.uuid4().hex
     video_job_service.create_job(job_id, title=req.title, language=cached.plan.language)
 
-    task = asyncio.create_task(
-        _run_job_async(
-            job_id,
-            cached,
-            req.title,
-            req.composer,
-            req.background_ids,
-            extracted_bg_paths,
-            req.karaoke_mode,
-            audio_stem,
-            req.primary_font_size,
-            req.secondary_font_size,
-            req.line_spacing_multiplier,
-            req.show_page_numbers,
-            bg_path_overrides,
-        )
+    spec = JobSpec(
+        title=req.title,
+        composer=req.composer,
+        background_ids=req.background_ids,
+        extracted_bg_paths=extracted_bg_paths,
+        karaoke_mode=req.karaoke_mode,
+        audio_stem=audio_stem,
+        primary_font_size=req.primary_font_size,
+        secondary_font_size=req.secondary_font_size,
+        line_spacing_multiplier=req.line_spacing_multiplier,
+        show_page_numbers=req.show_page_numbers,
+        bg_path_overrides=bg_path_overrides,
     )
+    task = asyncio.create_task(_run_job_async(job_id, cached, spec))
     _running_tasks.add(task)
     task.add_done_callback(_running_tasks.discard)
 

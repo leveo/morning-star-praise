@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import time
 from contextlib import asynccontextmanager
@@ -17,41 +18,49 @@ logger = logging.getLogger(__name__)
 def _cleanup_old_files(directory: Path, max_age_hours: int = 1):
     """Delete files / directories older than ``max_age_hours`` under ``directory``.
 
-    Recurses one level into any subdirectory whose name ends with ``/`` pattern
-    of being a container (e.g. ``analyses/``). The parent's mtime refreshes every
-    time a new child is added, so we must check the children's mtimes directly
-    or they'd never age out.
+    Descends one level into container subdirs (e.g. ``analyses/``) because a
+    container's mtime refreshes every time a new child is added, so a pure
+    top-level sweep would never evict stale grandchildren. Uses ``os.scandir``
+    (1 stat per entry) to avoid three separate ``stat()`` calls per path.
     """
-    if not directory.exists():
-        return
     cutoff = time.time() - (max_age_hours * 3600)
-    for path in directory.iterdir():
+    try:
+        entries = list(os.scandir(directory))
+    except FileNotFoundError:
+        return
+
+    for entry in entries:
         try:
-            mtime = path.stat().st_mtime
+            stat = entry.stat(follow_symlinks=False)
         except FileNotFoundError:
             continue
-        if path.is_file():
-            if mtime < cutoff:
-                path.unlink(missing_ok=True)
-        elif path.is_dir():
-            # Sweep grandchildren first — the parent's mtime bumps on every
-            # child write, so a busy container dir would otherwise shield
-            # stale grandchildren from ever expiring.
-            for child in path.iterdir():
-                try:
-                    child_mtime = child.stat().st_mtime
-                except FileNotFoundError:
-                    continue
-                if child_mtime >= cutoff:
-                    continue
-                if child.is_file():
-                    child.unlink(missing_ok=True)
-                elif child.is_dir():
-                    shutil.rmtree(child, ignore_errors=True)
-            # After sweeping children, drop the container itself only if it's
-            # now empty and itself stale.
-            if mtime < cutoff and not any(path.iterdir()):
-                shutil.rmtree(path, ignore_errors=True)
+        if entry.is_file(follow_symlinks=False):
+            if stat.st_mtime < cutoff:
+                Path(entry.path).unlink(missing_ok=True)
+            continue
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+
+        all_children_evicted = True
+        try:
+            children = list(os.scandir(entry.path))
+        except FileNotFoundError:
+            continue
+        for child in children:
+            try:
+                child_stat = child.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if child_stat.st_mtime >= cutoff:
+                all_children_evicted = False
+                continue
+            if child.is_file(follow_symlinks=False):
+                Path(child.path).unlink(missing_ok=True)
+            elif child.is_dir(follow_symlinks=False):
+                shutil.rmtree(child.path, ignore_errors=True)
+
+        if stat.st_mtime < cutoff and all_children_evicted:
+            shutil.rmtree(entry.path, ignore_errors=True)
 
 
 @asynccontextmanager

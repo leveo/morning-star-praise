@@ -13,6 +13,7 @@ import {
   getBackgrounds,
   getVideoJob,
   getVideoDownloadUrl,
+  mergeVideoJobStatus,
   type AnalyzedSlide,
   type AnalyzedStanzaOccurrence,
   type ExtractedBackground,
@@ -111,19 +112,7 @@ export default function WorshipVideoPage() {
     pollRef.current = window.setInterval(async () => {
       try {
         const latest = await getVideoJob(jobId);
-        setJob((prev) => {
-          if (
-            prev &&
-            prev.status === latest.status &&
-            prev.progress === latest.progress &&
-            prev.stage === latest.stage &&
-            prev.video_filename === latest.video_filename &&
-            prev.error === latest.error
-          ) {
-            return prev;
-          }
-          return latest;
-        });
+        setJob((prev) => mergeVideoJobStatus(prev, latest));
         if (latest.status === 'done' || latest.status === 'failed') {
           if (pollRef.current !== null) {
             window.clearInterval(pollRef.current);
