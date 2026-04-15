@@ -71,5 +71,5 @@ Taste nits go in the review thread but are not blockers unless the reviewer mark
 
 ## 5. Trigger phrase
 
-Saying **"code review"**, **"/code review"**, **"代码审查"**, or any obvious variant to Claude Code runs this entire procedure end to end — scope identification, three parallel review agents, aggregation + fixes, mandatory smoke test, and a final commit with a `Smoke test:` section. See `CLAUDE.md` for the operational details.
+Saying **"code review"**, **"/code review"**, **"代码审查"**, or any obvious variant to Claude Code runs this entire procedure end to end — scope identification, a 3-lens pass (three parallel review agents for non-trivial code diffs; a single inline pass for docs-only or ≤2-file mechanical diffs), aggregation + fixes, mandatory smoke test, and a final commit with a `Smoke test:` section. See `CLAUDE.md` for the operational details.
 
