@@ -1,4 +1,5 @@
 import base64
+import re
 from pathlib import Path
 
 from google import genai
@@ -42,6 +43,70 @@ def _pdf_to_images(pdf_path: Path) -> list[Path]:
     return output_paths
 
 
+# Characters that mark the end of a complete short phrase. A line ending in
+# any of these stays on its own; anything else (no punctuation at all) is
+# treated as a mid-phrase wrap from the sheet music layout and is joined to
+# the next line. Commas count — the user asked for short phrases, so a
+# comma-bounded clause is a valid boundary.
+_PHRASE_TERMINATORS = set(".,!?;:…。，、！？；：")
+
+# Section labels Gemini is told to emit (see OCR_PROMPT). A line that is
+# *exactly* one of these — possibly followed by a number and/or a colon —
+# is treated as a flush boundary even if the colon was dropped.
+_LABEL_RE = re.compile(
+    r"^\s*(?:verse|chorus|bridge|refrain|pre[\s-]?chorus|intro|outro|interlude|"
+    r"副歌|主歌|間奏|前奏|尾奏|第[一二三四五六七八九十\d]+段)"
+    r"(?:\s*\d+)?\s*[:：]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_cjk(ch: str) -> bool:
+    return "\u4e00" <= ch <= "\u9fff"
+
+
+def _merge_wrapped_lines(text: str) -> str:
+    """Join consecutive sheet-music lines that share a single phrase.
+
+    Sheet music often breaks one lyric line across multiple staves for
+    musical phrasing, and Gemini preserves those breaks verbatim. We stitch
+    them back together so each output line is a complete short phrase —
+    bounded by sentence punctuation, a section label, or a blank line.
+    """
+    merged: list[str] = []
+    buf = ""
+
+    def flush():
+        nonlocal buf
+        if buf:
+            merged.append(buf)
+            buf = ""
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            flush()
+            if merged and merged[-1] != "":
+                merged.append("")
+            continue
+        if _LABEL_RE.match(line):
+            flush()
+            merged.append(line)
+            continue
+        if not buf:
+            buf = line
+        else:
+            sep = "" if (_is_cjk(buf[-1]) or _is_cjk(line[0])) else " "
+            buf += sep + line
+        if buf[-1] in _PHRASE_TERMINATORS:
+            flush()
+
+    flush()
+    while merged and merged[-1] == "":
+        merged.pop()
+    return "\n".join(merged)
+
+
 OCR_PROMPT = """Extract only the song lyrics from this sheet music image.
 
 Rules:
@@ -81,7 +146,7 @@ def extract_lyrics_from_image(image_path: Path, session_id: str = "") -> dict:
         from app.services.usage_tracker import track_call
         track_call(session_id, "ocr", response)
 
-    lyrics = response.text.strip()
+    lyrics = _merge_wrapped_lines(response.text.strip())
 
     has_chinese = any("\u4e00" <= c <= "\u9fff" for c in lyrics)
     language = "zh-hans" if has_chinese else "en"
