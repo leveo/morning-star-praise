@@ -91,7 +91,7 @@ export default function TemplatesPage() {
               {editing?.id === t.id ? (
                 <div className="space-y-3">
                   <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                    className="bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm w-full focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    className="bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm w-full focus:outline-none focus:ring-2 focus:ring-gold-500" />
                   <div className="grid grid-cols-2 gap-3">
                     {[
                       { label: 'Font Size (EN)', key: 'font_size_en' },
@@ -109,7 +109,7 @@ export default function TemplatesPage() {
                     ))}
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={handleUpdate} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded">Save</button>
+                    <button onClick={handleUpdate} className="text-xs bg-gold-600 hover:bg-gold-700 text-white px-3 py-1.5 rounded">Save</button>
                     <button onClick={() => setEditing(null)} className="text-xs bg-slate-700 text-slate-300 px-3 py-1.5 rounded">Cancel</button>
                   </div>
                 </div>
@@ -118,7 +118,7 @@ export default function TemplatesPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="text-white font-medium">{t.name}</h3>
-                      {t.is_default && <span className="text-xs bg-indigo-600/30 text-indigo-300 px-2 py-0.5 rounded">Default</span>}
+                      {t.is_default && <span className="text-xs bg-gold-600/30 text-gold-300 px-2 py-0.5 rounded">Default</span>}
                     </div>
                     <p className="text-slate-500 text-xs mt-1">
                       EN: {t.config.font_size_en}pt | ZH: {t.config.font_size_zh}pt | Lines: {t.config.max_lines} | Opacity: {t.config.overlay_opacity}%
@@ -146,7 +146,7 @@ export default function TemplatesPage() {
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           placeholder="Template name..."
-          className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm w-full placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm w-full placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500"
         />
         <div className="grid grid-cols-2 gap-3">
           {[
@@ -165,7 +165,7 @@ export default function TemplatesPage() {
           ))}
         </div>
         <button onClick={handleCreate} disabled={!newName.trim()}
-          className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium">
+          className="bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium">
           Create Template
         </button>
       </div>

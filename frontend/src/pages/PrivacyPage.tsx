@@ -71,7 +71,7 @@ const PRIVACY_EN: PrivacyContent = {
               sent to Google's API. See{' '}
               <a
                 href="https://ai.google.dev/terms"
-                className="text-indigo-400 hover:text-indigo-300"
+                className="text-gold-400 hover:text-gold-300"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -88,7 +88,7 @@ const PRIVACY_EN: PrivacyContent = {
               and secret management in production. See{' '}
               <a
                 href="https://cloud.google.com/terms"
-                className="text-indigo-400 hover:text-indigo-300"
+                className="text-gold-400 hover:text-gold-300"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -223,7 +223,7 @@ const PRIVACY_ZH: PrivacyContent = {
               您为此类功能提交的文字与图片会发送至 Google API。详见{' '}
               <a
                 href="https://ai.google.dev/terms"
-                className="text-indigo-400 hover:text-indigo-300"
+                className="text-gold-400 hover:text-gold-300"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -240,7 +240,7 @@ const PRIVACY_ZH: PrivacyContent = {
               数据库及密钥管理。详见{' '}
               <a
                 href="https://cloud.google.com/terms"
-                className="text-indigo-400 hover:text-indigo-300"
+                className="text-gold-400 hover:text-gold-300"
                 target="_blank"
                 rel="noopener noreferrer"
               >

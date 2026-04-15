@@ -314,7 +314,7 @@ export default function VideoEditor({
               <button
                 type="button"
                 onClick={() => setBgPickerOpen(bgPickerOpen === i ? null : i)}
-                className="text-xs text-indigo-400 hover:text-indigo-300 whitespace-nowrap"
+                className="text-xs text-gold-400 hover:text-gold-300 whitespace-nowrap"
               >
                 Change BG
               </button>
@@ -342,7 +342,7 @@ export default function VideoEditor({
                   setBgOverrides((prev) => ({ ...prev, [bgPickerOpen]: bg.id }));
                   setBgPickerOpen(null);
                 }}
-                className="aspect-video rounded overflow-hidden border border-slate-700 hover:border-indigo-500"
+                className="aspect-video rounded overflow-hidden border border-slate-700 hover:border-gold-500"
               >
                 <img src={bg.url} alt="" className="w-full h-full object-cover" />
               </button>
@@ -385,7 +385,7 @@ export default function VideoEditor({
             type="button"
             onClick={handleRerender}
             disabled={!!isRendering}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            className="bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
           >
             {isRendering ? 'Re-rendering…' : 'Re-render Video'}
           </button>

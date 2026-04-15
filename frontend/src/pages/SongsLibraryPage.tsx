@@ -73,7 +73,7 @@ export default function SongsLibraryPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t.searchPlaceholder}
-            className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64"
+            className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 w-64"
           />
           <button type="submit" className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm">
             {t.searchButton}
@@ -112,7 +112,7 @@ export default function SongsLibraryPage() {
               <div className="flex items-center gap-2 ml-4">
                 <button
                   onClick={() => navigate(`/?song=${song.id}`)}
-                  className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded"
+                  className="text-xs bg-gold-600 hover:bg-gold-700 text-white px-3 py-1.5 rounded"
                 >
                   Use
                 </button>

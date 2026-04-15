@@ -362,7 +362,7 @@ export default function WorshipVideoPage() {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t.songTitlePlaceholder}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
           />
         </div>
         <div>
@@ -374,7 +374,7 @@ export default function WorshipVideoPage() {
             value={composer}
             onChange={(e) => setComposer(e.target.value)}
             placeholder={t.composerPlaceholder}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
           />
         </div>
         <div>
@@ -384,7 +384,7 @@ export default function WorshipVideoPage() {
           <select
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
           >
             <option value="auto">{t.audioLanguageAuto}</option>
             <option value="zh">{t.audioLanguageZh}</option>
@@ -413,7 +413,7 @@ export default function WorshipVideoPage() {
                 onClick={() => handleSourceChange(value)}
                 className={`flex-1 py-2 text-sm font-medium transition-colors ${
                   lyricsSource === value
-                    ? 'bg-indigo-600 text-white'
+                    ? 'bg-gold-600 text-white'
                     : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                 }`}
               >
@@ -464,7 +464,7 @@ export default function WorshipVideoPage() {
               value={youtubeUrl}
               onChange={(e) => setYoutubeUrl(e.target.value)}
               placeholder="https://www.youtube.com/watch?v=..."
-              className="flex-1 min-w-[280px] bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="flex-1 min-w-[280px] bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500"
             />
             <button
               onClick={handleExtract}
@@ -491,7 +491,7 @@ export default function WorshipVideoPage() {
               : t.lyricsPlaceholderExtracted
           }
           rows={12}
-          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-mono text-sm leading-relaxed resize-y"
+          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent font-mono text-sm leading-relaxed resize-y"
         />
       </div>
 
@@ -502,7 +502,7 @@ export default function WorshipVideoPage() {
               type="checkbox"
               checked={usePptBackgrounds}
               onChange={(e) => setUsePptBackgrounds(e.target.checked)}
-              className="rounded border-slate-600 bg-slate-800 text-indigo-600 focus:ring-indigo-500"
+              className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
             />
             <span className="text-sm font-medium text-slate-300">
               {t.usePptBackgrounds(extractedBgs.length)}
@@ -513,7 +513,7 @@ export default function WorshipVideoPage() {
               <div
                 key={bg.filename}
                 className={`aspect-video rounded overflow-hidden border ${
-                  usePptBackgrounds ? 'border-indigo-500' : 'border-slate-600 opacity-60'
+                  usePptBackgrounds ? 'border-gold-500' : 'border-slate-600 opacity-60'
                 }`}
               >
                 <img src={bg.url} alt={bg.filename} className="w-full h-full object-cover" />
@@ -587,7 +587,7 @@ export default function WorshipVideoPage() {
             type="checkbox"
             checked={showPageNumbers}
             onChange={(e) => setShowPageNumbers(e.target.checked)}
-            className="rounded border-slate-600 bg-slate-800 text-indigo-600 focus:ring-indigo-500"
+            className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
           />
           <span className="text-xs text-slate-400">{t.pageNumber}</span>
         </label>
@@ -688,7 +688,7 @@ export default function WorshipVideoPage() {
           !!isRunning ||
           !hasFreshPreview
         }
-        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
+        className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
       >
         {submitting
           ? t.starting
@@ -715,7 +715,7 @@ export default function WorshipVideoPage() {
           </div>
           <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
             <div
-              className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
+              className="bg-gold-500 h-2 rounded-full transition-all duration-300"
               style={{ width: `${job?.progress || 0}%` }}
             />
           </div>
@@ -735,7 +735,7 @@ export default function WorshipVideoPage() {
           <div className="flex flex-wrap gap-3">
             <button
               onClick={() => downloadFile(editedVideoFilename || job.video_filename!)}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              className="bg-gold-600 hover:bg-gold-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
               {t.downloadMp4}
             </button>

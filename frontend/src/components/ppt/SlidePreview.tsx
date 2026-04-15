@@ -169,7 +169,7 @@ export default function SlidePreview({
                 }}
                 className={`aspect-video rounded overflow-hidden border transition-all ${
                   backgroundUrl === bg.url
-                    ? 'border-indigo-500 ring-1 ring-indigo-500/50'
+                    ? 'border-gold-500 ring-1 ring-gold-500/50'
                     : 'border-slate-700 hover:border-slate-500'
                 }`}
               >

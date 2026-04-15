@@ -153,7 +153,7 @@ export default function OcrPage() {
           onDrop={(e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
           onClick={() => fileInputRef.current?.click()}
           className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
-            dragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-600 hover:border-slate-500'
+            dragOver ? 'border-gold-500 bg-gold-500/10' : 'border-slate-600 hover:border-slate-500'
           }`}
         >
           <input
@@ -180,7 +180,7 @@ export default function OcrPage() {
         <button
           onClick={handleExtract}
           disabled={extracting}
-          className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
+          className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
         >
           {extracting ? 'Extracting lyrics with AI...' : 'Extract Lyrics'}
         </button>
@@ -200,14 +200,14 @@ export default function OcrPage() {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Song title..."
-                className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 w-56"
+                className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-gold-500 w-56"
               />
               <input
                 type="text"
                 value={composer}
                 onChange={(e) => setComposer(e.target.value)}
                 placeholder="Composer..."
-                className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-44"
+                className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-gold-500 w-44"
               />
               <span className="text-xs text-slate-500">{pages} page(s)</span>
             </div>
@@ -215,7 +215,7 @@ export default function OcrPage() {
               <div className="flex rounded-lg overflow-hidden border border-slate-600">
                 {[{ value: 'en', label: 'EN' }, { value: 'zh-hans', label: '简' }, { value: 'zh-hant', label: '繁' }].map((opt) => (
                   <button key={opt.value} onClick={() => handleLanguageChange(opt.value as typeof language)}
-                    className={`px-3 py-1.5 text-sm font-medium transition-colors ${language === opt.value ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                    className={`px-3 py-1.5 text-sm font-medium transition-colors ${language === opt.value ? 'bg-gold-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
                   >{opt.label}</button>
                 ))}
               </div>
@@ -226,7 +226,7 @@ export default function OcrPage() {
             value={lyrics}
             onChange={(e) => setLyrics(e.target.value)}
             rows={10}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white font-mono text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white font-mono text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-gold-500"
           />
 
           <div className="flex items-center gap-4 flex-wrap">
@@ -266,7 +266,7 @@ export default function OcrPage() {
                 <BackgroundPicker selectedIds={selectedBgIds} onSelect={setSelectedBgIds} />
               </div>
               <button onClick={handleGenerate} disabled={generating || !title.trim()}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors">
+                className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors">
                 {generating ? 'Generating...' : 'Generate PPT'}
               </button>
             </>

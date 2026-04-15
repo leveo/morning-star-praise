@@ -240,12 +240,12 @@ export default function YouTubePage() {
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={t.urlPlaceholder}
-              className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500"
             />
             <button
               onClick={handleExtract}
               disabled={loading || !url.trim()}
-              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-medium transition-colors whitespace-nowrap"
+              className="bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-medium transition-colors whitespace-nowrap"
             >
               {loading ? t.extracting : t.extract}
             </button>
@@ -260,7 +260,7 @@ export default function YouTubePage() {
             </div>
             <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
               <div
-                className="bg-indigo-500 h-full rounded-full transition-all duration-700 ease-out"
+                className="bg-gold-500 h-full rounded-full transition-all duration-700 ease-out"
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -272,7 +272,7 @@ export default function YouTubePage() {
             onClick={() => setMode('lyrics')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               mode === 'lyrics'
-                ? 'bg-indigo-600 text-white'
+                ? 'bg-gold-600 text-white'
                 : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
             }`}
           >
@@ -282,7 +282,7 @@ export default function YouTubePage() {
             onClick={() => setMode('frames')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               mode === 'frames'
-                ? 'bg-indigo-600 text-white'
+                ? 'bg-gold-600 text-white'
                 : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
             }`}
           >
@@ -354,12 +354,12 @@ export default function YouTubePage() {
 
           <div className="border-t border-slate-700 pt-3 mt-3">
             <p className="text-xs text-slate-500">
-              <span className="text-indigo-400">{t.sopHintPrefix}</span>{' '}
+              <span className="text-gold-400">{t.sopHintPrefix}</span>{' '}
               <a
                 href="https://sop.org/powerpoint/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-indigo-400 hover:text-indigo-300 underline"
+                className="text-gold-400 hover:text-gold-300 underline"
               >
                 {t.sopHintLink}
               </a>
@@ -386,14 +386,14 @@ export default function YouTubePage() {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={t.songTitlePlaceholder}
-                className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-lg font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64"
+                className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gold-500 w-64"
               />
               <input
                 type="text"
                 value={composer}
                 onChange={(e) => setComposer(e.target.value)}
                 placeholder={t.composerPlaceholder}
-                className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-48"
+                className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-gold-500 w-48"
               />
               <span className="text-xs text-slate-500">
                 {subtitleType} · {language}
@@ -411,7 +411,7 @@ export default function YouTubePage() {
                     onClick={() => handleLanguageChange(opt.value as typeof language)}
                     className={`px-3 py-1.5 text-sm font-medium transition-colors ${
                       language === opt.value
-                        ? 'bg-indigo-600 text-white'
+                        ? 'bg-gold-600 text-white'
                         : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                     }`}
                   >
@@ -426,7 +426,7 @@ export default function YouTubePage() {
             value={lyrics}
             onChange={(e) => setLyrics(e.target.value)}
             rows={10}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white font-mono text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white font-mono text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-gold-500"
           />
 
           <div className="flex items-center gap-4">
@@ -495,7 +495,7 @@ export default function YouTubePage() {
             <button
               onClick={handleGenerateLyrics}
               disabled={generating || !title.trim()}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
+              className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
             >
               {generating ? t.generating : t.generatePpt}
             </button>
@@ -511,7 +511,7 @@ export default function YouTubePage() {
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-lg font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 w-96"
+              className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gold-500 w-96"
             />
             <span className="text-sm text-slate-400">
               {t.framesSelectedOf(selectedFrameIndices.size, frames.length)}
@@ -526,7 +526,7 @@ export default function YouTubePage() {
                 onClick={() => toggleFrame(i)}
                 className={`relative aspect-video rounded-lg overflow-hidden border-2 transition-all ${
                   selectedFrameIndices.has(i)
-                    ? 'border-indigo-500 ring-2 ring-indigo-500/30'
+                    ? 'border-gold-500 ring-2 ring-gold-500/30'
                     : 'border-slate-700 opacity-40'
                 }`}
               >
@@ -551,7 +551,7 @@ export default function YouTubePage() {
           <button
             onClick={handleGenerateFrames}
             disabled={generating || !title.trim() || selectedFrameIndices.size === 0}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
+            className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
           >
             {generating ? t.generating : t.generatePptWithCount(selectedFrameIndices.size)}
           </button>

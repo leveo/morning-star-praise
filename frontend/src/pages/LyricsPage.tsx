@@ -241,7 +241,7 @@ export default function LyricsPage() {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Enter song title..."
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
           />
         </div>
         <div>
@@ -253,7 +253,7 @@ export default function LyricsPage() {
             value={composer}
             onChange={(e) => setComposer(e.target.value)}
             placeholder="Composer..."
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
           />
         </div>
         <div>
@@ -270,7 +270,7 @@ export default function LyricsPage() {
                 onClick={() => handleLanguageChange(opt.value as typeof language)}
                 className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
                   language === opt.value
-                    ? 'bg-indigo-600 text-white'
+                    ? 'bg-gold-600 text-white'
                     : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                 }`}
               >
@@ -294,7 +294,7 @@ export default function LyricsPage() {
               <button
                 onClick={() => setBilingualMode('interleaved')}
                 className={`flex-1 py-1 text-xs font-medium transition-colors ${
-                  bilingualMode === 'interleaved' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'
+                  bilingualMode === 'interleaved' ? 'bg-gold-600 text-white' : 'bg-slate-800 text-slate-400'
                 }`}
               >
                 Interleaved
@@ -302,7 +302,7 @@ export default function LyricsPage() {
               <button
                 onClick={() => setBilingualMode('stacked')}
                 className={`flex-1 py-1 text-xs font-medium transition-colors ${
-                  bilingualMode === 'stacked' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'
+                  bilingualMode === 'stacked' ? 'bg-gold-600 text-white' : 'bg-slate-800 text-slate-400'
                 }`}
               >
                 Stacked
@@ -320,7 +320,7 @@ export default function LyricsPage() {
           </label>
           <button
             onClick={handleLoadSample}
-            className="text-xs text-indigo-400 hover:text-indigo-300"
+            className="text-xs text-gold-400 hover:text-gold-300"
           >
             Load sample
           </button>
@@ -333,7 +333,7 @@ export default function LyricsPage() {
               onChange={(e) => setLyrics(e.target.value)}
               placeholder="Paste lyrics here (Chinese or English)... Separate sections with blank lines."
               rows={addTranslation ? 10 : 12}
-              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-mono text-sm leading-relaxed resize-y"
+              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent font-mono text-sm leading-relaxed resize-y"
             />
           </div>
           {addTranslation && (
@@ -346,7 +346,7 @@ export default function LyricsPage() {
                 onChange={(e) => setTranslatedLyrics(e.target.value)}
                 placeholder="Translation will appear here..."
                 rows={10}
-                className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-mono text-sm leading-relaxed resize-y"
+                className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent font-mono text-sm leading-relaxed resize-y"
               />
             </div>
           )}
@@ -403,7 +403,7 @@ export default function LyricsPage() {
               type="checkbox"
               checked={showPageNumbers}
               onChange={(e) => setShowPageNumbers(e.target.checked)}
-              className="rounded border-slate-600 bg-slate-800 text-indigo-600 focus:ring-indigo-500"
+              className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
             />
             <span className="text-xs text-slate-400">Page #</span>
           </label>
@@ -464,7 +464,7 @@ export default function LyricsPage() {
         <button
           onClick={handleGenerate}
           disabled={loading || !title.trim()}
-          className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
+          className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
         >
           {loading ? 'Generating...' : 'Generate PPT'}
         </button>
@@ -501,7 +501,7 @@ export default function LyricsPage() {
                   alert('Song saved to library!');
                 } catch {}
               }}
-              className="text-sm text-slate-400 hover:text-indigo-400 transition-colors"
+              className="text-sm text-slate-400 hover:text-gold-400 transition-colors"
             >
               Save to Songs Library
             </button>

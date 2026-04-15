@@ -34,10 +34,10 @@ export default function FreeBackgroundResources() {
                 href={res.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block bg-slate-900/60 rounded-lg p-3 border border-slate-700 hover:border-indigo-500/60 hover:bg-slate-900 transition-colors"
+                className="block bg-slate-900/60 rounded-lg p-3 border border-slate-700 hover:border-gold-500/60 hover:bg-slate-900 transition-colors"
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-semibold text-indigo-300">{res.name}</span>
+                  <span className="text-sm font-semibold text-gold-300">{res.name}</span>
                   <span className="text-[10px] text-slate-500 uppercase tracking-wide">
                     {res.category}
                   </span>
