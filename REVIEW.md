@@ -67,3 +67,8 @@ If the change cannot be smoke-tested in the current environment — missing cred
 Any finding in §2 or a missing / insufficient smoke test in §3. A missing smoke test is a blocker on the same footing as a bug — the reviewer cannot verify the capability without it.
 
 Taste nits go in the review thread but are not blockers unless the reviewer marks them as such.
+
+## 5. Trigger phrase
+
+Saying **"code review"**, **"/code review"**, **"代码审查"**, or any obvious variant to Claude Code runs this entire procedure end to end — scope identification, three parallel review agents, aggregation + fixes, mandatory smoke test, and a final commit with a `Smoke test:` section. See `CLAUDE.md` for the operational details.
+
