@@ -86,9 +86,9 @@ Backgrounds (~192 MB of bundled defaults) live in `backend/data/backgrounds/defa
 When the user says **"code review"**, **"/code review"**, **"代码审查"**, or any obvious variant, run the full procedure defined in `REVIEW.md` — don't just read the diff and opine. The procedure is:
 
 1. Identify the scope — usually the diff since the last commit on `main`, or the files modified in the current session if there's no working-tree diff. Confirm the scope with the user only if ambiguous.
-2. Launch three review agents **in parallel** in a single message, one per lens (reuse / quality / efficiency). Pass each agent the full diff and the list of file paths it should prioritize.
+2. Run the three review lenses (reuse / quality / efficiency) over the diff. For non-trivial code changes spanning multiple files, launch three review agents **in parallel** in a single message, one per lens, and pass each agent the full diff plus the file paths it should prioritize. For docs-only or tiny diffs (≤2 files, mechanical edits), collapse the three lenses into a single inline pass — the 3-agent overhead isn't justified.
 3. Aggregate findings. Fix R1/Q1/E1 items directly. Fix most R2/Q2/E2 items unless they'd balloon scope. Skip nits and note them.
-4. **Smoke test the changed capability.** This is mandatory, not optional. Per REVIEW.md §3: a type-check or test-suite pass is a supplement, not a substitute. Pick the most relevant smoke path (backend endpoint, frontend dev server + user flow, Remotion render, alignment pipeline sample, cold rebuild) and actually exercise it. Report what was exercised, the input, and the observed output.
+4. **Smoke test the changed capability.** This is mandatory, not optional. Per REVIEW.md §3: a type-check or test-suite pass is a supplement, not a substitute. Pick the most relevant smoke path (backend endpoint, frontend dev server + user flow, Remotion render, alignment pipeline sample, cold rebuild, or — for docs — walking through the documented procedure end-to-end) and actually exercise it. Report what was exercised, the input, and the observed output.
 5. Commit the fixes with a `Smoke test:` section in the message.
 
 This trigger is distinct from `/simplify` — simplify is a review-and-fix pass with no smoke-test requirement. "Code review" always ends with a smoke-test report.

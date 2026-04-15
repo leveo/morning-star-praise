@@ -43,6 +43,7 @@ Every review must include a smoke test that actually exercises the changed capab
 - **Remotion composition change**: render a short (≤10s) MP4 via the CLI or open the composition in `@remotion/player` and scrub through several frames.
 - **Pipeline / alignment / transcription change**: run the change against at least one real sample (audio + lyrics pair) and verify the artifact (slide timings, stanza match, karaoke units) makes sense.
 - **Build / dependency change**: run the build from a cold `node_modules` or `.venv` to confirm it succeeds with no warnings added by the change.
+- **Docs change** (README / CLAUDE.md / REVIEW.md / ops runbooks): walk through the documented procedure end-to-end, tracing each referenced file path, command, and trigger phrase. Confirm the docs match current code / infrastructure — a rule that contradicts the codebase is worse than no rule.
 
 ### What does not qualify
 
