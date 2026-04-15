@@ -1,0 +1,40 @@
+# Environment / secrets
+.env
+*.env.local
+service-account*.json
+credentials*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+remotion/out/
+*.tsbuildinfo
+
+# Runtime output (generated videos / PPTs / uploads / extracted bgs)
+backend/output/
+backend/uploads/
+backend/data/video_work/
+backend/data/extracted-bgs/
+backend/data/analyses/
+
+# Databases
+*.sqlite
+*.sqlite3
+*.db
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

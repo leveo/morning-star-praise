@@ -1,0 +1,12 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+python-pptx==1.0.2
+python-multipart==0.0.20
+Pillow==12.1.1
+opencc-python-reimplemented==0.1.7
+youtube-transcript-api==1.0.3
+yt-dlp==2025.3.31
+google-genai==1.14.0
+psycopg[binary]==3.2.9
+aiofiles==24.1.0
+faster-whisper==1.2.1
