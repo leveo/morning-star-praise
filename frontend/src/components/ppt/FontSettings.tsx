@@ -1,3 +1,5 @@
+import { useUILanguage, UI_TEXT } from '../../hooks/useLanguage';
+
 interface Props {
   primaryFontSize: number | null;
   setPrimaryFontSize: (n: number | null) => void;
@@ -23,18 +25,20 @@ export default function FontSettings({
   setLineSpacing,
   showSecondary = true,
 }: Props) {
+  const [uiLanguage] = useUILanguage();
+  const t = UI_TEXT[uiLanguage].fontSettings;
   const selectClass =
     'bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white';
   return (
     <>
       <div className="flex items-center gap-2">
-        <label className="text-xs text-slate-400">Primary size:</label>
+        <label className="text-xs text-slate-400">{t.primarySize}</label>
         <select
           value={primaryFontSize ?? 0}
           onChange={(e) => setPrimaryFontSize(Number(e.target.value) || null)}
           className={selectClass}
         >
-          <option value={0}>Auto</option>
+          <option value={0}>{t.auto}</option>
           {PRIMARY_CHOICES.map((n) => (
             <option key={n} value={n}>
               {n}pt
@@ -44,13 +48,13 @@ export default function FontSettings({
       </div>
       {showSecondary && (
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-400">Secondary size:</label>
+          <label className="text-xs text-slate-400">{t.secondarySize}</label>
           <select
             value={secondaryFontSize ?? 0}
             onChange={(e) => setSecondaryFontSize(Number(e.target.value) || null)}
             className={selectClass}
           >
-            <option value={0}>Auto</option>
+            <option value={0}>{t.auto}</option>
             {SECONDARY_CHOICES.map((n) => (
               <option key={n} value={n}>
                 {n}pt
@@ -60,13 +64,13 @@ export default function FontSettings({
         </div>
       )}
       <div className="flex items-center gap-2">
-        <label className="text-xs text-slate-400">Line spacing:</label>
+        <label className="text-xs text-slate-400">{t.lineSpacing}</label>
         <select
           value={lineSpacing ?? 0}
           onChange={(e) => setLineSpacing(Number(e.target.value) || null)}
           className={selectClass}
         >
-          <option value={0}>Auto</option>
+          <option value={0}>{t.auto}</option>
           {SPACING_CHOICES.map((n) => (
             <option key={n} value={n}>
               {n.toFixed(1)}

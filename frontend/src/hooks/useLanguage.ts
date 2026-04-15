@@ -23,6 +23,42 @@ export type ResourceEntry = {
 type TextDict = {
   lyrics: {
     backgrounds: string;
+    songTitle: string;
+    songTitlePlaceholder: string;
+    composer: string;
+    composerPlaceholder: string;
+    outputLanguage: string;
+    translating: string;
+    translationAdded: string;
+    addTranslation: string;
+    modeInterleaved: string;
+    modeStacked: string;
+    lyricsLabel: string;
+    loadSample: string;
+    originalLyrics: string;
+    lyricsPlaceholder: string;
+    translationOf: (target: 'en' | 'zh-hans' | 'zh-hant') => string;
+    translationPlaceholder: string;
+    maxLines: string;
+    maxChars: string;
+    maxSlides: string;
+    noLimit: string;
+    pageNumber: string;
+    previewParse: string;
+    previewSlidesWithCount: (n: number) => string;
+    regenerating: string;
+    regenerateSlides: string;
+    generating: string;
+    generatePpt: string;
+    errorParse: string;
+    errorNeedTitle: string;
+    errorNeedParse: string;
+    errorGenerate: string;
+    errorRegenerate: string;
+    errorConvert: string;
+    errorTranslate: string;
+    savedToast: string;
+    saveToLibrary: string;
   };
   ocr: {
     title: string;
@@ -120,6 +156,12 @@ type TextDict = {
     editVideo: string;
     closeEditor: string;
     newVideo: string;
+  };
+  fontSettings: {
+    primarySize: string;
+    secondarySize: string;
+    lineSpacing: string;
+    auto: string;
   };
   songs: {
     title: string;
@@ -260,6 +302,44 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
   zh: {
     lyrics: {
       backgrounds: '背景',
+      songTitle: '歌曲标题',
+      songTitlePlaceholder: '输入歌曲标题…',
+      composer: '作曲 / 作词',
+      composerPlaceholder: '作曲者…',
+      outputLanguage: '输出语言',
+      translating: '翻译中…',
+      translationAdded: '已添加翻译',
+      addTranslation: '+ 添加翻译',
+      modeInterleaved: '交错',
+      modeStacked: '并排',
+      lyricsLabel: '歌词',
+      loadSample: '加载示例',
+      originalLyrics: '原文歌词',
+      lyricsPlaceholder:
+        '在此粘贴歌词（中文或英文），用空行分隔段落。',
+      translationOf: (target) =>
+        `译文（${target === 'en' ? '英文' : target === 'zh-hans' ? '简体中文' : '繁體中文'}）— 可编辑`,
+      translationPlaceholder: '翻译结果会显示在这里…',
+      maxLines: '每张最多行数：',
+      maxChars: '每行最多字符：',
+      maxSlides: '最多 slide 数：',
+      noLimit: '不限',
+      pageNumber: '页码',
+      previewParse: '预览 slide',
+      previewSlidesWithCount: (n) => `预览 slide（${n} 张）`,
+      regenerating: '重新生成中…',
+      regenerateSlides: '重新生成 slide',
+      generating: '生成中…',
+      generatePpt: '生成 PPT',
+      errorParse: '解析歌词失败',
+      errorNeedTitle: '请先填写歌曲标题',
+      errorNeedParse: '请先解析歌词',
+      errorGenerate: '生成 PPT 失败',
+      errorRegenerate: '重新生成失败',
+      errorConvert: '繁简转换失败',
+      errorTranslate: '翻译失败',
+      savedToast: '已保存到诗歌库！',
+      saveToLibrary: '保存到诗歌库',
     },
     ocr: {
       title: '乐谱识别',
@@ -383,6 +463,12 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       closeEditor: '关闭编辑器',
       newVideo: '重新制作',
     },
+    fontSettings: {
+      primarySize: '主字号：',
+      secondarySize: '副字号：',
+      lineSpacing: '行距：',
+      auto: '自动',
+    },
     songs: {
       title: '诗歌库',
       searchPlaceholder: '搜索歌曲…',
@@ -426,6 +512,44 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
   en: {
     lyrics: {
       backgrounds: 'Backgrounds',
+      songTitle: 'Song Title',
+      songTitlePlaceholder: 'Enter song title...',
+      composer: 'Composer',
+      composerPlaceholder: 'Composer...',
+      outputLanguage: 'Output Language',
+      translating: 'Translating...',
+      translationAdded: 'Translation Added',
+      addTranslation: '+ Add Translation',
+      modeInterleaved: 'Interleaved',
+      modeStacked: 'Stacked',
+      lyricsLabel: 'Lyrics',
+      loadSample: 'Load sample',
+      originalLyrics: 'Original Lyrics',
+      lyricsPlaceholder:
+        'Paste lyrics here (Chinese or English)... Separate sections with blank lines.',
+      translationOf: (target) =>
+        `Translation (${target === 'en' ? 'English' : target === 'zh-hans' ? 'Simplified Chinese' : 'Traditional Chinese'}) — editable`,
+      translationPlaceholder: 'Translation will appear here...',
+      maxLines: 'Max lines/slide:',
+      maxChars: 'Max chars/row:',
+      maxSlides: 'Max slides:',
+      noLimit: 'No limit',
+      pageNumber: 'Page #',
+      previewParse: 'Preview Slides',
+      previewSlidesWithCount: (n) => `Preview Slides (${n})`,
+      regenerating: 'Regenerating...',
+      regenerateSlides: 'Regenerate Slides',
+      generating: 'Generating...',
+      generatePpt: 'Generate PPT',
+      errorParse: 'Failed to parse lyrics',
+      errorNeedTitle: 'Please enter a song title',
+      errorNeedParse: 'Please parse lyrics first',
+      errorGenerate: 'Failed to generate PPT',
+      errorRegenerate: 'Regeneration failed',
+      errorConvert: 'Conversion failed',
+      errorTranslate: 'Translation failed',
+      savedToast: 'Song saved to library!',
+      saveToLibrary: 'Save to Songs Library',
     },
     ocr: {
       title: 'Sheet Music OCR',
@@ -551,6 +675,12 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       editVideo: 'Edit Video',
       closeEditor: 'Close editor',
       newVideo: 'New video',
+    },
+    fontSettings: {
+      primarySize: 'Primary size:',
+      secondarySize: 'Secondary size:',
+      lineSpacing: 'Line spacing:',
+      auto: 'Auto',
     },
     songs: {
       title: 'Songs Library',

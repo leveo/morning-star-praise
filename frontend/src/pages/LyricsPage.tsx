@@ -35,6 +35,7 @@ The hour I first believed`;
 export default function LyricsPage() {
   const [uiLanguage] = useUILanguage();
   const t = UI_TEXT[uiLanguage];
+  const tl = t.lyrics;
   // Inputs the user typed/toggled — persisted across tab switches.
   const [title, setTitle] = usePersistedState('lyrics.title', '');
   const [composer, setComposer] = usePersistedState('lyrics.composer', '');
@@ -98,17 +99,17 @@ export default function LyricsPage() {
           : await parseLyrics(primaryText, language, maxLines, maxSlides, maxWidth);
       setSlides(result.slides);
     } catch (err) {
-      setError('Failed to parse lyrics');
+      setError(tl.errorParse);
     }
   };
 
   const handleGenerate = async () => {
     if (!title.trim()) {
-      setError('Please enter a song title');
+      setError(tl.errorNeedTitle);
       return;
     }
     if (slides.length === 0) {
-      setError('Please parse lyrics first');
+      setError(tl.errorNeedParse);
       return;
     }
 
@@ -129,7 +130,7 @@ export default function LyricsPage() {
       setPreview(result.slides_preview);
       setFilename(result.filename);
     } catch (err) {
-      setError('Failed to generate PPT');
+      setError(tl.errorGenerate);
     } finally {
       setLoading(false);
     }
@@ -163,7 +164,7 @@ export default function LyricsPage() {
       setPreview(result.slides_preview);
       setFilename(result.filename);
     } catch {
-      setError('Regeneration failed');
+      setError(tl.errorRegenerate);
     } finally {
       setLoading(false);
     }
@@ -201,7 +202,7 @@ export default function LyricsPage() {
         setSlides(parsed.slides);
       }
     } catch {
-      setError('Conversion failed');
+      setError(tl.errorConvert);
     }
   };
 
@@ -221,7 +222,7 @@ export default function LyricsPage() {
       setAddTranslation(true);
       refreshUsage();
     } catch (err: any) {
-      const msg = err.response?.data?.detail || 'Translation failed';
+      const msg = err.response?.data?.detail || tl.errorTranslate;
       setError(msg);
     } finally {
       setTranslating(false);
@@ -234,31 +235,31 @@ export default function LyricsPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="md:col-span-2">
           <label className="block text-sm font-medium text-slate-300 mb-1">
-            Song Title
+            {tl.songTitle}
           </label>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Enter song title..."
+            placeholder={tl.songTitlePlaceholder}
             className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
           />
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
-            Composer
+            {tl.composer}
           </label>
           <input
             type="text"
             value={composer}
             onChange={(e) => setComposer(e.target.value)}
-            placeholder="Composer..."
+            placeholder={tl.composerPlaceholder}
             className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
           />
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
-            Output Language
+            {tl.outputLanguage}
           </label>
           <div className="flex rounded-lg overflow-hidden border border-slate-600">
             {[
@@ -287,7 +288,7 @@ export default function LyricsPage() {
                 : 'bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-50'
             }`}
           >
-            {translating ? 'Translating...' : addTranslation ? 'Translation Added' : '+ Add Translation'}
+            {translating ? tl.translating : addTranslation ? tl.translationAdded : tl.addTranslation}
           </button>
           {addTranslation && (
             <div className="flex rounded overflow-hidden border border-slate-600 mt-1">
@@ -297,7 +298,7 @@ export default function LyricsPage() {
                   bilingualMode === 'interleaved' ? 'bg-gold-600 text-white' : 'bg-slate-800 text-slate-400'
                 }`}
               >
-                Interleaved
+                {tl.modeInterleaved}
               </button>
               <button
                 onClick={() => setBilingualMode('stacked')}
@@ -305,7 +306,7 @@ export default function LyricsPage() {
                   bilingualMode === 'stacked' ? 'bg-gold-600 text-white' : 'bg-slate-800 text-slate-400'
                 }`}
               >
-                Stacked
+                {tl.modeStacked}
               </button>
             </div>
           )}
@@ -316,22 +317,22 @@ export default function LyricsPage() {
       <div>
         <div className="flex items-center justify-between mb-1">
           <label className="block text-sm font-medium text-slate-300">
-            Lyrics
+            {tl.lyricsLabel}
           </label>
           <button
             onClick={handleLoadSample}
             className="text-xs text-gold-400 hover:text-gold-300"
           >
-            Load sample
+            {tl.loadSample}
           </button>
         </div>
         <div className={addTranslation ? 'grid grid-cols-2 gap-4' : ''}>
           <div>
-            {addTranslation && <label className="block text-xs text-slate-400 mb-1">Original Lyrics</label>}
+            {addTranslation && <label className="block text-xs text-slate-400 mb-1">{tl.originalLyrics}</label>}
             <textarea
               value={lyrics}
               onChange={(e) => setLyrics(e.target.value)}
-              placeholder="Paste lyrics here (Chinese or English)... Separate sections with blank lines."
+              placeholder={tl.lyricsPlaceholder}
               rows={addTranslation ? 10 : 12}
               className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent font-mono text-sm leading-relaxed resize-y"
             />
@@ -339,12 +340,12 @@ export default function LyricsPage() {
           {addTranslation && (
             <div>
               <label className="block text-xs text-slate-400 mb-1">
-                Translation ({isInputChinese() ? 'English' : language === 'zh-hans' ? '简体中文' : '繁體中文'}) — editable
+                {tl.translationOf(isInputChinese() ? 'en' : language)}
               </label>
               <textarea
                 value={translatedLyrics}
                 onChange={(e) => setTranslatedLyrics(e.target.value)}
-                placeholder="Translation will appear here..."
+                placeholder={tl.translationPlaceholder}
                 rows={10}
                 className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent font-mono text-sm leading-relaxed resize-y"
               />
@@ -353,7 +354,7 @@ export default function LyricsPage() {
         </div>
         <div className="flex items-center gap-4 mt-2 flex-wrap">
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-400">Max lines/slide:</label>
+            <label className="text-xs text-slate-400">{tl.maxLines}</label>
             <select
               value={maxLines}
               onChange={(e) => setMaxLines(Number(e.target.value))}
@@ -365,7 +366,7 @@ export default function LyricsPage() {
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-400">Max chars/row:</label>
+            <label className="text-xs text-slate-400">{tl.maxChars}</label>
             <select
               value={maxWidth}
               onChange={(e) => setMaxWidth(Number(e.target.value))}
@@ -377,13 +378,13 @@ export default function LyricsPage() {
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-400">Max slides:</label>
+            <label className="text-xs text-slate-400">{tl.maxSlides}</label>
             <select
               value={maxSlides}
               onChange={(e) => setMaxSlides(Number(e.target.value))}
               className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"
             >
-              <option value={0}>No limit</option>
+              <option value={0}>{tl.noLimit}</option>
               {[2, 3, 4, 5, 6, 8, 10, 12, 15, 20].map((n) => (
                 <option key={n} value={n}>{n}</option>
               ))}
@@ -405,7 +406,7 @@ export default function LyricsPage() {
               onChange={(e) => setShowPageNumbers(e.target.checked)}
               className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
             />
-            <span className="text-xs text-slate-400">Page #</span>
+            <span className="text-xs text-slate-400">{tl.pageNumber}</span>
           </label>
           {preview.length === 0 ? (
             <button
@@ -413,7 +414,7 @@ export default function LyricsPage() {
               disabled={!lyrics.trim()}
               className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
             >
-              Preview Slides ({slides.length > 0 ? `${slides.length} slides` : 'parse'})
+              {slides.length > 0 ? tl.previewSlidesWithCount(slides.length) : tl.previewParse}
             </button>
           ) : (
             <button
@@ -421,7 +422,7 @@ export default function LyricsPage() {
               disabled={!lyrics.trim() || loading}
               className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
             >
-              {loading ? 'Regenerating...' : 'Regenerate Slides'}
+              {loading ? tl.regenerating : tl.regenerateSlides}
             </button>
           )}
         </div>
@@ -466,7 +467,7 @@ export default function LyricsPage() {
           disabled={loading || !title.trim()}
           className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
         >
-          {loading ? 'Generating...' : 'Generate PPT'}
+          {loading ? tl.generating : tl.generatePpt}
         </button>
       )}
 
@@ -498,12 +499,12 @@ export default function LyricsPage() {
               onClick={async () => {
                 try {
                   await saveSong(title, lyrics, language, 'text');
-                  alert('Song saved to library!');
+                  alert(tl.savedToast);
                 } catch {}
               }}
               className="text-sm text-slate-400 hover:text-gold-400 transition-colors"
             >
-              Save to Songs Library
+              {tl.saveToLibrary}
             </button>
             <UsageBadge usage={usage} />
           </div>
