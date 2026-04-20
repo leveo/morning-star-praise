@@ -5,6 +5,8 @@ import VideoEditor from '../components/worship/VideoEditor';
 import FreeBackgroundResources from '../components/worship/FreeBackgroundResources';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { useResumeSnapshot } from '../hooks/useResumeSnapshot';
+import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import {
   analyzeWorshipAudio,
   createWorshipVideo,
@@ -61,15 +63,16 @@ export default function WorshipVideoPage() {
     false,
   );
   const [karaokeMode, setKaraokeMode] = usePersistedState('worshipVideo.karaokeMode', false);
+  const template = useTemplateDefaults();
   const [showPageNumbers, setShowPageNumbers] = usePersistedState(
     'worshipVideo.showPageNumbers',
-    false,
+    template.showPageNumbers,
   );
-  const [maxLines, setMaxLines] = usePersistedState('worshipVideo.maxLines', 6);
-  const [maxWidth, setMaxWidth] = usePersistedState('worshipVideo.maxWidth', 12);
+  const [maxLines, setMaxLines] = usePersistedState('worshipVideo.maxLines', template.maxLinesPerSlide);
+  const [maxWidth, setMaxWidth] = usePersistedState('worshipVideo.maxWidth', template.maxWidthPerRow);
   const [primaryFontSize, setPrimaryFontSize] = usePersistedState<number | null>(
     'worshipVideo.primaryFontSize',
-    null,
+    template.primaryFontSize,
   );
   const [secondaryFontSize, setSecondaryFontSize] = usePersistedState<number | null>(
     'worshipVideo.secondaryFontSize',
@@ -77,7 +80,7 @@ export default function WorshipVideoPage() {
   );
   const [lineSpacing, setLineSpacing] = usePersistedState<number | null>(
     'worshipVideo.lineSpacing',
-    null,
+    template.lineSpacing,
   );
 
   // Analysis state — regenerated whenever the inputs that affect slide
@@ -106,6 +109,50 @@ export default function WorshipVideoPage() {
   useEffect(() => {
     getBackgrounds().then(setAllBackgrounds).catch(() => {});
   }, []);
+
+  useResumeSnapshot<Partial<{
+    title: string;
+    composer: string;
+    language: string;
+    lyrics: string;
+    selectedBgIds: number[];
+    lyricsSource: LyricsSource;
+    youtubeUrl: string;
+    usePptBackgrounds: boolean;
+    karaokeMode: boolean;
+    showPageNumbers: boolean;
+    maxLines: number;
+    maxWidth: number;
+    primaryFontSize: number | null;
+    secondaryFontSize: number | null;
+    lineSpacing: number | null;
+  }>>('worship-video', (payload) => {
+    const s = payload.snapshot;
+    if (s.title != null) setTitle(s.title);
+    if (s.composer != null) setComposer(s.composer);
+    if (s.language != null) setLanguage(s.language);
+    if (s.lyrics != null) setLyrics(s.lyrics);
+    if (s.selectedBgIds != null) setSelectedBgIds(s.selectedBgIds);
+    if (s.lyricsSource != null) setLyricsSource(s.lyricsSource);
+    if (s.youtubeUrl != null) setYoutubeUrl(s.youtubeUrl);
+    if (s.usePptBackgrounds != null) setUsePptBackgrounds(s.usePptBackgrounds);
+    if (s.karaokeMode != null) setKaraokeMode(s.karaokeMode);
+    if (s.showPageNumbers != null) setShowPageNumbers(s.showPageNumbers);
+    if (s.maxLines != null) setMaxLines(s.maxLines);
+    if (s.maxWidth != null) setMaxWidth(s.maxWidth);
+    if (s.primaryFontSize != null) setPrimaryFontSize(s.primaryFontSize);
+    if (s.secondaryFontSize != null) setSecondaryFontSize(s.secondaryFontSize);
+    if (s.lineSpacing != null) setLineSpacing(s.lineSpacing);
+    // If the analysis cache is still on disk, pre-seed analysisId so
+    // "Edit video" works without re-analyzing. Filename from the prior
+    // render lets the user see the completed state immediately.
+    if (payload.analysis_exists && payload.analysis_id) {
+      setAnalysisId(payload.analysis_id);
+    }
+    if (payload.filename) {
+      setEditedVideoFilename(payload.filename);
+    }
+  });
 
   const startPolling = (jobId: string) => {
     if (pollRef.current !== null) window.clearInterval(pollRef.current);
@@ -231,6 +278,13 @@ export default function WorshipVideoPage() {
     setJob(null);
     try {
       const useExtracted = usePptBackgrounds && extractedBgs.length > 0;
+      const snapshot = {
+        title, composer, language, lyrics,
+        selectedBgIds, lyricsSource, youtubeUrl,
+        usePptBackgrounds, karaokeMode, showPageNumbers,
+        maxLines, maxWidth,
+        primaryFontSize, secondaryFontSize, lineSpacing,
+      };
       const created = await createWorshipVideo(
         analysisId,
         title,
@@ -242,6 +296,7 @@ export default function WorshipVideoPage() {
         secondaryFontSize ?? undefined,
         lineSpacing ?? undefined,
         showPageNumbers,
+        snapshot,
       );
       setJob(created);
       startPolling(created.job_id);

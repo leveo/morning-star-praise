@@ -5,6 +5,7 @@ import SlideDeck from '../components/ppt/SlideDeck';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
 import UsageBadge from '../components/shared/UsageBadge';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import { useUsageTracker } from '../hooks/useUsageTracker';
 import {
   extractYouTubeLyrics,
@@ -36,11 +37,12 @@ export default function YouTubePage() {
     'en',
   );
   const [subtitleType, setSubtitleType] = usePersistedState('youtube.subtitleType', '');
-  const [maxLines, setMaxLines] = usePersistedState('youtube.maxLines', 6);
-  const [maxWidth, setMaxWidth] = usePersistedState('youtube.maxWidth', 12);
+  const template = useTemplateDefaults();
+  const [maxLines, setMaxLines] = usePersistedState('youtube.maxLines', template.maxLinesPerSlide);
+  const [maxWidth, setMaxWidth] = usePersistedState('youtube.maxWidth', template.maxWidthPerRow);
   const [primaryFontSize, setPrimaryFontSize] = usePersistedState<number | null>(
     'youtube.primaryFontSize',
-    null,
+    template.primaryFontSize,
   );
   const [secondaryFontSize, setSecondaryFontSize] = usePersistedState<number | null>(
     'youtube.secondaryFontSize',
@@ -48,7 +50,7 @@ export default function YouTubePage() {
   );
   const [lineSpacing, setLineSpacing] = usePersistedState<number | null>(
     'youtube.lineSpacing',
-    null,
+    template.lineSpacing,
   );
   const [selectedBgIds, setSelectedBgIds] = usePersistedState<number[]>('youtube.selectedBgIds', []);
 

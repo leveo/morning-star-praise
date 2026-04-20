@@ -38,3 +38,6 @@ backend/data/analyses/
 .idea/
 .vscode/
 *.swp
+
+# praise.sh runtime logs
+.dev-logs/

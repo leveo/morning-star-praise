@@ -2,10 +2,8 @@ import base64
 import re
 from pathlib import Path
 
-from google import genai
 from PIL import Image
 
-from app.config import settings
 from app.services.chinese_service import contains_chinese, is_cjk_char
 
 
@@ -112,35 +110,20 @@ Rules:
 
 
 def extract_lyrics_from_image(image_path: Path, session_id: str = "") -> dict:
-    """Extract lyrics from a sheet music image using Gemini Vision.
+    """Extract lyrics from a sheet music image via the configured vision LLM.
 
     Returns: {lyrics: str, language: str}
     """
-    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+    from app.services import llm_service
 
     mime_type = _get_mime_type(image_path)
     image_bytes = image_path.read_bytes()
-
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[
-            {
-                "role": "user",
-                "parts": [
-                    {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode()}},
-                    {"text": OCR_PROMPT},
-                ],
-            }
-        ],
+    text = llm_service.generate_from_image(
+        image_bytes, mime_type, OCR_PROMPT,
+        session_id=session_id, action="ocr",
     )
-
-    if session_id:
-        from app.services.usage_tracker import track_call
-        track_call(session_id, "ocr", response)
-
-    lyrics = _merge_wrapped_lines(response.text.strip())
+    lyrics = _merge_wrapped_lines(text)
     language = "zh-hans" if contains_chinese(lyrics) else "en"
-
     return {"lyrics": lyrics, "language": language}
 
 

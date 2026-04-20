@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.models import PPTGenerateRequest, PPTGenerateResponse
+from app.services import library_service
 from app.services.background_service import assign_backgrounds, list_default_backgrounds
 from app.services.ppt_service import generate_pptx
 
@@ -84,6 +85,17 @@ def generate_ppt(request: PPTGenerateRequest):
             bg_path = bg_paths[bg_idx] if bg_paths else None
             bg_url = bg_url_map.get(bg_path.name, "") if bg_path else ""
         slides_preview.append({"text": slide.text, "background_url": bg_url})
+
+    if request.source_page in ("lyrics", "youtube", "ocr") and filename:
+        library_service.record_item(
+            item_type="ppt",
+            source_page=request.source_page,  # type: ignore[arg-type]
+            title=request.title,
+            language=request.language,
+            filename=filename,
+            analysis_id=None,
+            input_snapshot=request.input_snapshot or {},
+        )
 
     return PPTGenerateResponse(filename=filename, slides_preview=slides_preview)
 

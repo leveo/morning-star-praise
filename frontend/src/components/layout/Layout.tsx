@@ -12,7 +12,7 @@ const navItems: NavItem[] = [
   { path: '/ocr', label: { zh: '乐谱', en: 'Sheet Music' } },
   { path: '/worship-video', label: { zh: '视频', en: 'Video' } },
   { path: '/songs', label: { zh: '诗歌库', en: 'Songs' } },
-  { path: '/templates', label: { zh: '模板', en: 'Templates' } },
+  { path: '/templates', label: { zh: '设置', en: 'Settings' } },
 ];
 
 const HEADER_TAGLINE: Record<UILanguage, string> = {

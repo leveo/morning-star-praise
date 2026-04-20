@@ -14,6 +14,7 @@ import {
 } from '../api/client';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import { useUsageTracker } from '../hooks/useUsageTracker';
 import type { SlideData } from '../types';
 
@@ -50,12 +51,13 @@ export default function LyricsPage() {
     'lyrics.bilingualMode',
     'interleaved',
   );
-  const [maxLines, setMaxLines] = usePersistedState('lyrics.maxLines', 6);
-  const [maxSlides, setMaxSlides] = usePersistedState('lyrics.maxSlides', 0);
-  const [maxWidth, setMaxWidth] = usePersistedState('lyrics.maxWidth', 12);
+  const template = useTemplateDefaults();
+  const [maxLines, setMaxLines] = usePersistedState('lyrics.maxLines', template.maxLinesPerSlide);
+  const [maxSlides, setMaxSlides] = usePersistedState('lyrics.maxSlides', template.maxSlides);
+  const [maxWidth, setMaxWidth] = usePersistedState('lyrics.maxWidth', template.maxWidthPerRow);
   const [primaryFontSize, setPrimaryFontSize] = usePersistedState<number | null>(
     'lyrics.primaryFontSize',
-    null,
+    template.primaryFontSize,
   );
   const [secondaryFontSize, setSecondaryFontSize] = usePersistedState<number | null>(
     'lyrics.secondaryFontSize',
@@ -63,9 +65,9 @@ export default function LyricsPage() {
   );
   const [lineSpacing, setLineSpacing] = usePersistedState<number | null>(
     'lyrics.lineSpacing',
-    null,
+    template.lineSpacing,
   );
-  const [showPageNumbers, setShowPageNumbers] = usePersistedState('lyrics.showPageNumbers', false);
+  const [showPageNumbers, setShowPageNumbers] = usePersistedState('lyrics.showPageNumbers', template.showPageNumbers);
   const [selectedBgIds, setSelectedBgIds] = usePersistedState<number[]>('lyrics.selectedBgIds', []);
 
   // Transient / derived — reset on each visit. Generated filenames would

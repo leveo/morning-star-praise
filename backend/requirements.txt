@@ -7,6 +7,10 @@ opencc-python-reimplemented==0.1.7
 youtube-transcript-api==1.0.3
 yt-dlp==2025.3.31
 google-genai==1.14.0
+# Optional LLM provider SDKs — install whichever you configure via LLM_*_PROVIDER.
+# openai: also covers MiniMax / Qwen / GLM / Ollama via their OpenAI-compatible endpoints.
+openai>=1.50.0
+anthropic>=0.42.0
 psycopg[binary]==3.2.9
 aiofiles==24.1.0
 faster-whisper==1.2.1

@@ -31,6 +31,13 @@ class PPTGenerateRequest(BaseModel):
     primary_font_size: int | None = None
     secondary_font_size: int | None = None
     line_spacing_multiplier: float | None = None
+    # Library / history metadata. Optional — when provided, the successful
+    # generation is recorded in ppt_library so the Songs Library page can
+    # restore this session later. ``source_page`` identifies which frontend
+    # page produced the request ('lyrics' | 'youtube' | 'ocr'); ``input_snapshot``
+    # is an opaque JSON blob of the form fields the page wants to rehydrate.
+    source_page: str | None = None
+    input_snapshot: dict | None = None
 
 
 class PPTGenerateResponse(BaseModel):

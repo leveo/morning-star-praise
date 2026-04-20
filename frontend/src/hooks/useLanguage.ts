@@ -167,10 +167,55 @@ type TextDict = {
     title: string;
     searchPlaceholder: string;
     searchButton: string;
+    description: string;
+    filterAll: string;
+    filterPpt: string;
+    filterVideo: string;
+    emptyTitle: string;
+    emptyBody: string;
+    dbUnavailable: string;
+    download: string;
+    resume: string;
+    delete: string;
+    deleteConfirm: string;
+    fileExpired: string;
+    analysisExpired: string;
   };
   templates: {
     title: string;
     createNew: string;
+    description: string;
+    maxLines: string;
+    maxChars: string;
+    maxSlides: string;
+    noLimit: string;
+    primaryFontSize: string;
+    lineSpacing: string;
+    showPageNumbers: string;
+    auto: string;
+    save: string;
+    saved: string;
+    resetToFactory: string;
+    resetConfirm: string;
+    sectionDefaults: string;
+    sectionLLM: string;
+    llmDescription: string;
+    modeDefault: string;
+    modeAPI: string;
+    modeLocal: string;
+    modeDefaultHint: string;
+    modeAPIHint: string;
+    modeLocalHint: string;
+    textProvider: string;
+    visionProvider: string;
+    textModel: string;
+    visionModel: string;
+    modelPlaceholderDefault: string;
+    providerConfigured: string;
+    providerMissingKey: string;
+    howToConfigure: string;
+    howToConfigureBody: (envVar: string, getKeyUrl: string) => string;
+    restartRequired: string;
   };
   slideDeck: {
     preview: (n: number) => string;
@@ -471,12 +516,58 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
     },
     songs: {
       title: '诗歌库',
-      searchPlaceholder: '搜索歌曲…',
+      searchPlaceholder: '搜索标题…',
       searchButton: '搜索',
+      description: '这里显示你之前生成过的 PPT 与视频。点「下载」获取原文件，点「恢复会话」回到对应页面继续编辑。',
+      filterAll: '全部',
+      filterPpt: 'PPT',
+      filterVideo: '视频',
+      emptyTitle: '还没有已生成的作品',
+      emptyBody: '每次成功生成 PPT 或视频后都会自动保存到这里。',
+      dbUnavailable: '诗歌库需要 Postgres 数据库（参见 README 的 Database 一节）。',
+      download: '下载',
+      resume: '恢复会话',
+      delete: '删除',
+      deleteConfirm: '确认删除这条记录？（原文件不会被删除）',
+      fileExpired: '文件已过期',
+      analysisExpired: '分析缓存已过期，部分编辑功能不可用',
     },
     templates: {
-      title: 'PPT 模板',
+      title: '设置',
       createNew: '新建模板',
+      description: '这里的偏好会被所有页面读取为默认值。每个页面仍可在本次会话中临时修改，下次打开新 tab 又回到这里。',
+      maxLines: '每张最多行数',
+      maxChars: '每行最多字符',
+      maxSlides: '最多 slide 数',
+      noLimit: '0 表示不限',
+      primaryFontSize: '主字号（pt）',
+      lineSpacing: '行距倍数',
+      showPageNumbers: '页码',
+      auto: '自动（按语言）',
+      save: '保存',
+      saved: '已保存',
+      resetToFactory: '恢复出厂默认',
+      resetConfirm: '确认恢复出厂默认？将清除你保存的设置。',
+      sectionDefaults: '默认模板',
+      sectionLLM: 'LLM 配置',
+      llmDescription: '切换 OCR / 翻译 / YouTube 帧分析用哪家 LLM。纯本地模式用 Ollama（需先 ollama pull 模型）；API 模式用云端服务需要 API key。API key 永远只存在后端的 .env，不会发送到前端。',
+      modeDefault: '跟随服务器默认',
+      modeAPI: 'API 模式（云端）',
+      modeLocal: '本地模式（Ollama）',
+      modeDefaultHint: '使用后端 .env 里配置的 provider。',
+      modeAPIHint: '为文本和视觉各选一家云端 provider。需要对应 API key 在后端 .env 里。',
+      modeLocalHint: '所有 LLM 调用走本机 Ollama。零云端成本、完全离线。',
+      textProvider: '文本 provider',
+      visionProvider: '视觉 provider',
+      textModel: '文本模型',
+      visionModel: '视觉模型',
+      modelPlaceholderDefault: '留空 = provider 默认',
+      providerConfigured: '已就绪',
+      providerMissingKey: '缺少 API key',
+      howToConfigure: '如何配置',
+      howToConfigureBody: (envVar, getKeyUrl) =>
+        `1. 申请 key: ${getKeyUrl}\n2. 编辑 backend/.env，加一行：${envVar}=<你的key>\n3. 重启后端（./praise.sh 或直接 Ctrl+C 后 python run.py）`,
+      restartRequired: '改完 .env 后需重启后端才生效。',
     },
     slideDeck: {
       preview: (n) => `预览（${n} 张 slide）`,
@@ -684,12 +775,58 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
     },
     songs: {
       title: 'Songs Library',
-      searchPlaceholder: 'Search songs...',
+      searchPlaceholder: 'Search title...',
       searchButton: 'Search',
+      description: 'Everything you have generated: PPTs and videos. Download to grab the file, or resume to pick up where you left off in the source page.',
+      filterAll: 'All',
+      filterPpt: 'PPT',
+      filterVideo: 'Video',
+      emptyTitle: 'Nothing here yet',
+      emptyBody: 'Successful PPT and video renders appear here automatically.',
+      dbUnavailable: 'Songs Library requires a PostgreSQL database (see the Database section in README).',
+      download: 'Download',
+      resume: 'Resume',
+      delete: 'Delete',
+      deleteConfirm: 'Delete this library entry? (The output file is not removed.)',
+      fileExpired: 'File expired',
+      analysisExpired: 'Analysis cache expired — editor features limited',
     },
     templates: {
-      title: 'PPT Templates',
+      title: 'Settings',
       createNew: 'Create New Template',
+      description: 'Preferences here seed every page. Each page can still be overridden for the current session; new tabs start from these values again.',
+      maxLines: 'Max lines per slide',
+      maxChars: 'Max chars per row',
+      maxSlides: 'Max slides',
+      noLimit: '0 means no limit',
+      primaryFontSize: 'Primary font size (pt)',
+      lineSpacing: 'Line spacing multiplier',
+      showPageNumbers: 'Show page numbers',
+      auto: 'Auto (by language)',
+      save: 'Save',
+      saved: 'Saved',
+      resetToFactory: 'Reset to factory defaults',
+      resetConfirm: 'Reset to factory defaults? Saved settings will be cleared.',
+      sectionDefaults: 'Default Template',
+      sectionLLM: 'LLM Configuration',
+      llmDescription: 'Pick which LLM powers OCR / translation / YouTube frame analysis. Local mode uses Ollama (pull the model first); API mode uses a cloud provider and needs its API key in the backend .env. API keys never leave the server.',
+      modeDefault: 'Follow server default',
+      modeAPI: 'API mode (cloud)',
+      modeLocal: 'Local mode (Ollama)',
+      modeDefaultHint: 'Use whichever provider the backend .env configures.',
+      modeAPIHint: 'Pick a cloud provider for text and for vision. Each needs its API key in the backend .env.',
+      modeLocalHint: 'Route all LLM calls through your local Ollama. Zero cost, fully offline.',
+      textProvider: 'Text provider',
+      visionProvider: 'Vision provider',
+      textModel: 'Text model',
+      visionModel: 'Vision model',
+      modelPlaceholderDefault: 'Leave blank for provider default',
+      providerConfigured: 'Ready',
+      providerMissingKey: 'API key missing',
+      howToConfigure: 'How to configure',
+      howToConfigureBody: (envVar, getKeyUrl) =>
+        `1. Get a key from: ${getKeyUrl}\n2. Edit backend/.env and add: ${envVar}=<your-key>\n3. Restart the backend (./praise.sh or Ctrl+C then python run.py)`,
+      restartRequired: 'Backend restart needed after editing .env.',
     },
     slideDeck: {
       preview: (n) => `Preview (${n} slides)`,

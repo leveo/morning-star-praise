@@ -15,7 +15,14 @@ export default defineConfig({
   resolve: {
     alias: {
       '@remotion-composition': path.resolve(REMOTION_DIR, 'src'),
+      // Force a single React copy. WorshipVideo.tsx is imported from
+      // ../remotion/src, which has its own node_modules/react — without
+      // this alias, Vite can end up bundling two React instances and
+      // every hook call inside the composition throws "Invalid hook call".
+      react: path.resolve(__dirname, 'node_modules/react'),
+      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
     },
+    dedupe: ['react', 'react-dom', 'remotion'],
   },
   server: {
     fs: {

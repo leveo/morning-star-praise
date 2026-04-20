@@ -754,12 +754,55 @@ def align_chunks_to_timeline(
     return results
 
 
+def _redistribute_chunk_unit_times(
+    units: list[dict],
+    chunk_start: float,
+    chunk_end: float,
+) -> None:
+    """Repair per-chunk karaoke unit times using the chunk's own window.
+
+    Whisper occasionally compresses a run of words into a tiny time window
+    (e.g. 8 CJK chars crammed into 0.1s of timeline). Raw char-level
+    alignment then clusters every unit inside that window, so every char
+    lights up simultaneously and often earlier than actually sung. When
+    the raw span covers less than half the chunk duration, fall back to
+    the chunk's stanza-level timing — it's derived from whole-verse audio
+    matching and is much more reliable.
+    """
+    timed_idx = [i for i, u in enumerate(units) if u.get("startSec") is not None]
+    if not timed_idx:
+        return
+    chunk_dur = max(chunk_end - chunk_start, 0.1)
+    raw = [units[i]["startSec"] for i in timed_idx]
+    raw_span = max(raw) - min(raw)
+    # Trail keeps the last char's ramp inside the slide, not across the crossfade.
+    trail = min(0.1, 0.05 * chunk_dur)
+    span_end = chunk_end - trail
+    n = len(timed_idx)
+
+    if raw_span >= 0.5 * chunk_dur:
+        min_gap = min(0.04, max(0.0, (span_end - chunk_start) / max(n, 1)))
+        prev = chunk_start - min_gap
+        for i in timed_idx:
+            t = max(chunk_start, min(units[i]["startSec"], span_end))
+            if t <= prev + min_gap:
+                t = prev + min_gap
+            units[i]["startSec"] = round(t, 3)
+            prev = t
+        return
+
+    for k, i in enumerate(timed_idx):
+        frac = k / max(n - 1, 1) if n > 1 else 0.0
+        units[i]["startSec"] = round(chunk_start + frac * (span_end - chunk_start), 3)
+
+
 def compute_chunk_units(
     lyric_chunks: list[str],
     whisper_words: list[WhisperWord],
     audio_duration: float,
     intro_offset: float = 0.0,
     curve_cache: CharCurveCache | None = None,
+    timed_chunks: list["TimedChunk"] | None = None,
 ) -> list[list[dict]]:
     """For each chunk, return a list of karaoke units {text, startSec, isLineBreak}.
 
@@ -832,6 +875,9 @@ def compute_chunk_units(
             )
             char_pos += word_len
             i = j
+        if timed_chunks and chunk_idx < len(timed_chunks):
+            tc = timed_chunks[chunk_idx]
+            _redistribute_chunk_unit_times(units, tc.start, tc.end)
         all_units.append(units)
     return all_units
 
@@ -1023,6 +1069,11 @@ class AudioPlan:
     # during /analyze and cached on disk so the render step doesn't run the
     # SequenceMatcher alignment pass a second time.
     timed: list[TimedChunk] = field(default_factory=list)
+    # Per-slide karaoke unit timings. Populated during /analyze alongside
+    # ``timed`` (shares the same SequenceMatcher curve) and persisted so
+    # GET /plan and the render step can read without rebuilding the O(n²)
+    # alignment. Cleared by /rerender when timing overrides change.
+    karaoke_units: list[list[dict]] = field(default_factory=list)
 
 
 def plan_to_dict(plan: AudioPlan) -> dict:
@@ -1050,6 +1101,7 @@ def plan_to_dict(plan: AudioPlan) -> dict:
             {"text": tc.text, "start": tc.start, "end": tc.end}
             for tc in plan.timed
         ],
+        "karaoke_units": plan.karaoke_units,
     }
 
 
@@ -1078,6 +1130,7 @@ def plan_from_dict(d: dict) -> AudioPlan:
             TimedChunk(text=tc["text"], start=float(tc["start"]), end=float(tc["end"]))
             for tc in d.get("timed", [])
         ],
+        karaoke_units=list(d.get("karaoke_units", [])),
     )
 
 
@@ -1263,11 +1316,15 @@ def build_video_from_plan(
 
     karaoke_units: list[list[dict]] | None = None
     if karaoke_mode:
-        karaoke_units = compute_chunk_units(
-            plan.lyric_chunks, plan.whisper_words, plan.audio_duration,
-            intro_offset=plan.intro_end,
-            curve_cache=curve_cache,
-        )
+        if plan.karaoke_units:
+            karaoke_units = plan.karaoke_units
+        else:
+            karaoke_units = compute_chunk_units(
+                plan.lyric_chunks, plan.whisper_words, plan.audio_duration,
+                intro_offset=plan.intro_end,
+                curve_cache=curve_cache,
+                timed_chunks=timed,
+            )
 
     stem = _sanitize_stem(output_stem) if output_stem else f"worship_video_{uuid.uuid4().hex[:8]}"
     video_path = _unique_output_path(output_dir, stem, ".mp4")

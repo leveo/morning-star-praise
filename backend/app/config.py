@@ -42,5 +42,35 @@ class Settings:
     # API keys (resolved via env → Google Secret Manager → default)
     GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
 
+    # LLM provider selection — see llm_service.py for supported values.
+    # Empty string = "LLM features disabled". Text and vision can use
+    # different providers so you can run e.g. Ollama text + Gemini vision.
+    # Vision defaults to ollama because qwen3-vl:8b runs fully local and
+    # beats PaddleOCR on sheet-music lyric extraction; switch to a cloud
+    # provider if you don't want to install Ollama.
+    LLM_TEXT_PROVIDER = get_secret("LLM_TEXT_PROVIDER", "gemini").lower()
+    LLM_VISION_PROVIDER = get_secret("LLM_VISION_PROVIDER", "ollama").lower()
+
+    # Per-provider API keys. Each is optional — only the ones you route to
+    # via LLM_*_PROVIDER need to be set.
+    OPENAI_API_KEY = get_secret("OPENAI_API_KEY", "")
+    ANTHROPIC_API_KEY = get_secret("ANTHROPIC_API_KEY", "")
+    MINIMAX_API_KEY = get_secret("MINIMAX_API_KEY", "")
+    DASHSCOPE_API_KEY = get_secret("DASHSCOPE_API_KEY", "")  # Alibaba Qwen
+    ZHIPU_API_KEY = get_secret("ZHIPU_API_KEY", "")  # Zhipu GLM
+
+    # Model overrides — defaults are set per-provider in llm_service.
+    LLM_TEXT_MODEL = get_secret("LLM_TEXT_MODEL", "")
+    LLM_VISION_MODEL = get_secret("LLM_VISION_MODEL", "")
+
+    # Ollama (local) — defaults to the standard localhost port.
+    # Text:    gemma4:e4b (default, 8B) or qwen3.5:9b (alternative, strong CJK).
+    # Vision:  qwen3-vl:8b handles both OCR (lyric sheet / frame extraction)
+    #          and vision reasoning (YouTube frame KEEP/SKIP filtering, dedup)
+    #          in one model.
+    OLLAMA_BASE_URL = get_secret("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    OLLAMA_TEXT_MODEL = get_secret("OLLAMA_TEXT_MODEL", "gemma4:e4b")
+    OLLAMA_VISION_MODEL = get_secret("OLLAMA_VISION_MODEL", "qwen3-vl:8b")
+
 
 settings = Settings()

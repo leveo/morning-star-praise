@@ -15,10 +15,11 @@ const ALLOWED_VIDEO_RE = /^video\/(mp4|webm|quicktime)$/;
 
 const HIDDEN_TAGS = new Set(['static', 'motion', 'dynamic', 'image', 'video']);
 
-// Tiles outside the viewport pause their <video> via IntersectionObserver so the
-// browser only decodes the ~8 visible ones. Without this, 30+ autoplay videos in
-// one grid will saturate the decoder and jank the whole page.
-function LazyVideoTile({ src }: { src: string }) {
+// Off-screen tiles stay at preload="none" so opening the grid doesn't fire
+// 30+ metadata fetches in parallel. IntersectionObserver upgrades visible
+// tiles to preload="metadata" and plays them; off-screen tiles pause so the
+// browser only decodes the ~8 visible ones.
+export function LazyVideoTile({ src }: { src: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const setRef = useCallback((node: HTMLVideoElement | null) => {
@@ -29,6 +30,7 @@ function LazyVideoTile({ src }: { src: string }) {
         const el = videoRef.current;
         if (!el) return;
         if (entry.isIntersecting) {
+          if (el.preload !== 'metadata') el.preload = 'metadata';
           el.play().catch(() => {
             /* autoplay may be blocked in some browsers; tiles still show the poster frame */
           });
@@ -57,7 +59,7 @@ function LazyVideoTile({ src }: { src: string }) {
       muted
       loop
       playsInline
-      preload="metadata"
+      preload="none"
     />
   );
 }

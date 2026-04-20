@@ -11,6 +11,7 @@ import {
   type WorshipPlanResponse,
 } from '../../api/client';
 import type { BackgroundInfo } from '../../types';
+import { LazyVideoTile } from '../ppt/BackgroundPicker';
 
 interface Props {
   analysisId: string;
@@ -133,6 +134,7 @@ export default function VideoEditor({
         startSec: edit?.start ?? tc.start,
         endSec: edit?.end ?? tc.end,
         backgroundSrc: backgroundUrlForSlide(i),
+        units: tc.units,
       };
     });
     return {
@@ -332,7 +334,11 @@ export default function VideoEditor({
                 }}
                 className="aspect-video rounded overflow-hidden border border-slate-700 hover:border-gold-500"
               >
-                <img src={bg.url} alt="" className="w-full h-full object-cover" />
+                {bg.media_type === 'video' ? (
+                  <LazyVideoTile src={bg.url} />
+                ) : (
+                  <img src={bg.url} alt="" className="w-full h-full object-cover" />
+                )}
               </button>
             ))}
           </div>

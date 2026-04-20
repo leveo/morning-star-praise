@@ -1,7 +1,3 @@
-from google import genai
-
-from app.config import settings
-
 ZH_TO_EN_PROMPT = """Translate the following Chinese worship song lyrics into English.
 
 CRITICAL RULE: If this is a well-known classic hymn (经典诗歌/赞美诗), you MUST use the established, widely-sung English translation rather than creating a new one. For example:
@@ -93,17 +89,8 @@ Lyrics to translate ({line_count} lines, {section_count} sections):
 
 
 def _call_gemini(prompt: str, session_id: str = "", action: str = "translate") -> str:
-    if not settings.GOOGLE_API_KEY:
-        raise ValueError("GOOGLE_API_KEY not configured. Set the environment variable or add it to Google Secret Manager.")
-    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-    if session_id:
-        from app.services.usage_tracker import track_call
-        track_call(session_id, action, response)
-    return response.text.strip()
+    from app.services import llm_service
+    return llm_service.generate_text(prompt, session_id=session_id, action=action)
 
 
 def _get_structure(lyrics: str) -> tuple[int, int, list[int]]:

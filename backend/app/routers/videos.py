@@ -132,6 +132,12 @@ class JobSpec:
     line_spacing_multiplier: float | None
     show_page_numbers: bool
     bg_path_overrides: dict[int, Path] | None = None
+    # Library / history metadata — written to ppt_library when the job
+    # completes successfully. None means "don't record", preserving
+    # backward-compat for older clients that don't send a snapshot.
+    analysis_id: str | None = None
+    library_language: str | None = None
+    library_snapshot: dict | None = None
 
 
 def _analysis_dir(analysis_id: str) -> Path:
@@ -231,6 +237,18 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             video_filename=video_path.name,
             srt_filename=srt_path.name,
         )
+
+        if spec.library_snapshot is not None:
+            from app.services import library_service
+            library_service.record_item(
+                item_type="video",
+                source_page="worship-video",
+                title=spec.title or "(untitled)",
+                language=spec.library_language,
+                filename=video_path.name,
+                analysis_id=spec.analysis_id,
+                input_snapshot=spec.library_snapshot,
+            )
     except Exception as exc:
         logger.exception("Video job %s failed", job_id)
         try:
@@ -270,7 +288,14 @@ def _analyze_sync(
         max_width_per_row=max_width_per_row,
     )
 
-    timed = video_service.finalize_plan_timings(plan)
+    curve_cache = video_service.CharCurveCache()
+    timed = video_service.finalize_plan_timings(plan, curve_cache=curve_cache)
+    plan.karaoke_units = video_service.compute_chunk_units(
+        plan.lyric_chunks, plan.whisper_words, plan.audio_duration,
+        intro_offset=plan.intro_end,
+        curve_cache=curve_cache,
+        timed_chunks=timed,
+    )
     stanza_idx_by_chunk = plan.chunk_stanza_idx or [-1] * len(plan.lyric_chunks)
 
     slides_payload: list[AnalyzedSlide] = []
@@ -374,6 +399,7 @@ async def create_video(
     secondary_font_size: int | None = Form(None),
     line_spacing_multiplier: float | None = Form(None),
     show_page_numbers: bool = Form(False),
+    input_snapshot: str = Form(""),
 ):
     cached = _load_cached_plan(analysis_id)
 
@@ -398,6 +424,16 @@ async def create_video(
     job_id = uuid.uuid4().hex
     video_job_service.create_job(job_id, title=title, language=cached.plan.language)
 
+    snapshot_payload: dict | None = None
+    if input_snapshot:
+        try:
+            parsed = json.loads(input_snapshot)
+            if isinstance(parsed, dict):
+                snapshot_payload = parsed
+        except ValueError:
+            # Malformed snapshot shouldn't block the render — just skip recording.
+            logger.warning("create_video: ignoring invalid input_snapshot JSON")
+
     spec = JobSpec(
         title=title,
         composer=composer,
@@ -409,6 +445,9 @@ async def create_video(
         secondary_font_size=secondary_font_size,
         line_spacing_multiplier=line_spacing_multiplier,
         show_page_numbers=show_page_numbers,
+        analysis_id=analysis_id,
+        library_language=cached.plan.language,
+        library_snapshot=snapshot_payload,
     )
     task = asyncio.create_task(_run_job_async(job_id, cached, spec))
     _running_tasks.add(task)
@@ -525,6 +564,13 @@ def get_analysis_plan(analysis_id: str):
     # it before sending. The full plan is still available on disk for any
     # server-side re-rendering.
     plan_dict.pop("whisper_words", None)
+
+    # Inline karaoke units into each timed entry for the editor Player;
+    # drop the top-level duplicate to keep the response compact.
+    units = plan_dict.pop("karaoke_units", []) or []
+    for i, tc in enumerate(plan_dict.get("timed", [])):
+        tc["units"] = units[i] if i < len(units) else []
+
     return {
         "analysis_id": analysis_id,
         "audio_filename": cached.audio_filename,
@@ -572,6 +618,7 @@ class RerenderRequest(BaseModel):
     show_page_numbers: bool = False
     timing_overrides: list[TimingOverride] = []
     background_overrides: list[BackgroundOverride] = []
+    input_snapshot: dict | None = None
 
 
 @router.post("/rerender", response_model=VideoJobResponse)
@@ -592,6 +639,8 @@ async def rerender_video(req: RerenderRequest):
         for i in range(len(timed) - 1):
             timed[i].end = timed[i + 1].start
         cached.plan.timed = timed
+        # Overrides moved chunk windows — cached units are stale, force recompute.
+        cached.plan.karaoke_units = []
 
     extracted_bg_paths: list[Path] | None = None
     if req.extracted_background_paths:
@@ -630,6 +679,9 @@ async def rerender_video(req: RerenderRequest):
         line_spacing_multiplier=req.line_spacing_multiplier,
         show_page_numbers=req.show_page_numbers,
         bg_path_overrides=bg_path_overrides,
+        analysis_id=req.analysis_id,
+        library_language=cached.plan.language,
+        library_snapshot=req.input_snapshot,
     )
     task = asyncio.create_task(_run_job_async(job_id, cached, spec))
     _running_tasks.add(task)

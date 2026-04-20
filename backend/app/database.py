@@ -26,8 +26,22 @@ def get_db():
 
 
 def init_tables():
-    """Create PPT Maker tables if they don't exist."""
+    """Create PPT Maker tables if they don't exist.
+
+    ``auth_user`` comes from the upstream Django project that originally
+    shared this schema. When PPT Maker is deployed standalone, no Django is
+    present — we create a minimal stub here so the FK constraints on
+    ``created_by`` still resolve. Adding a real user / auth layer later is a
+    matter of migrating this stub, not dropping FKs across five tables.
+    """
     with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS auth_user (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ppt_songs (
                 id SERIAL PRIMARY KEY,
@@ -71,6 +85,23 @@ def init_tables():
                 created_by INTEGER REFERENCES auth_user(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ppt_library (
+                id SERIAL PRIMARY KEY,
+                item_type TEXT NOT NULL CHECK (item_type IN ('ppt', 'video')),
+                source_page TEXT NOT NULL,
+                title TEXT NOT NULL,
+                language TEXT,
+                filename TEXT,
+                analysis_id TEXT,
+                input_snapshot JSONB NOT NULL DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ppt_library_created_at
+            ON ppt_library (created_at DESC)
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ppt_video_jobs (

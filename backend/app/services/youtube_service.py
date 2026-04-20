@@ -647,35 +647,22 @@ Rules:
 - Do not add explanation"""
 
 
-def _dedup_frames_by_text(frames: list[Path], client, session_id: str = "") -> list[Path]:
+def _dedup_frames_by_text(frames: list[Path], session_id: str = "") -> list[Path]:
     """Remove consecutive frames with identical lyrics text.
 
     Only deduplicates ADJACENT frames — repeated choruses are preserved.
     """
-    import base64
+    from app.services import llm_service
 
     prev_text = ""
     deduped = []
 
     for frame_path in frames:
-        img_bytes = frame_path.read_bytes()
-        b64 = base64.b64encode(img_bytes).decode()
-
         try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[{
-                    "role": "user",
-                    "parts": [
-                        {"inline_data": {"mime_type": "image/jpeg", "data": b64}},
-                        {"text": _FRAME_OCR_PROMPT},
-                    ],
-                }],
+            text = llm_service.generate_from_image(
+                frame_path.read_bytes(), "image/jpeg", _FRAME_OCR_PROMPT,
+                session_id=session_id, action="frame_ocr",
             )
-            if session_id:
-                from app.services.usage_tracker import track_call
-                track_call(session_id, "frame_ocr", response)
-            text = response.text.strip()
             if text == "NONE" or not text:
                 continue
             normalized = ''.join(c for c in text if '\u4e00' <= c <= '\u9fff')
@@ -707,49 +694,25 @@ SKIP if:
 
 
 def _filter_frames_with_gemini(frames: list[Path], session_id: str = "") -> list[Path]:
-    """Use Gemini Vision to filter frames, keeping only those with complete Chinese lyrics."""
-    import base64
-    from app.config import settings
+    """Use the configured vision LLM to keep frames with complete Chinese lyrics."""
+    from app.services import llm_service
 
-    if not settings.GOOGLE_API_KEY:
+    if not llm_service.is_vision_enabled():
         return frames
 
-    try:
-        from google import genai
-        from app.services.usage_tracker import track_call
-
-        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-        kept = []
-
-        for frame_path in frames:
-            img_bytes = frame_path.read_bytes()
-            b64 = base64.b64encode(img_bytes).decode()
-
-            try:
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=[{
-                        "role": "user",
-                        "parts": [
-                            {"inline_data": {"mime_type": "image/jpeg", "data": b64}},
-                            {"text": _FRAME_FILTER_PROMPT},
-                        ],
-                    }],
-                )
-                if session_id:
-                    track_call(session_id, "frame_filter", response)
-                answer = response.text.strip().upper()
-                if "KEEP" in answer:
-                    kept.append(frame_path)
-            except Exception:
-                # On per-frame error, keep the frame (be conservative)
+    kept = []
+    for frame_path in frames:
+        try:
+            answer = llm_service.generate_from_image(
+                frame_path.read_bytes(), "image/jpeg", _FRAME_FILTER_PROMPT,
+                session_id=session_id, action="frame_filter",
+            ).upper()
+            if "KEEP" in answer:
                 kept.append(frame_path)
+        except Exception:
+            # On per-frame error, keep the frame (be conservative)
+            kept.append(frame_path)
 
-        # Phase 2b: dedup by OCR text — remove frames with identical lyrics
-        if len(kept) > 1:
-            kept = _dedup_frames_by_text(kept, client, session_id=session_id)
-
-        return kept
-
-    except Exception:
-        return frames
+    if len(kept) > 1:
+        kept = _dedup_frames_by_text(kept, session_id=session_id)
+    return kept

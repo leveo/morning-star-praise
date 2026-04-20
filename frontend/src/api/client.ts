@@ -1,8 +1,19 @@
 import axios from 'axios';
 import type { BackgroundInfo, LyricsParseResponse, PPTGenerateResponse, SlideData } from '../types';
+import { currentLLMSettings, resolveLLMHeaders } from '../hooks/useLLMSettings';
 
 const api = axios.create({
   baseURL: '/api',
+});
+
+// Attach X-LLM-* headers from localStorage settings on every request. API
+// keys never travel over these headers — the backend reads keys from .env.
+api.interceptors.request.use((config) => {
+  const headers = resolveLLMHeaders(currentLLMSettings());
+  for (const [k, v] of Object.entries(headers)) {
+    config.headers.set(k, v);
+  }
+  return config;
 });
 
 export async function parseLyrics(
@@ -297,7 +308,12 @@ export interface WorshipPlanResponse {
     occurrences: { stanza_idx: number; start_sec: number; end_sec: number; score: number }[];
     lyric_chunks: string[];
     chunk_stanza_idx: number[];
-    timed: { text: string; start: number; end: number }[];
+    timed: {
+      text: string;
+      start: number;
+      end: number;
+      units?: { text: string; startSec: number | null; isLineBreak: boolean }[];
+    }[];
   };
 }
 
@@ -323,6 +339,7 @@ export interface RerenderRequest {
   showPageNumbers?: boolean;
   timingOverrides?: { idx: number; start_sec: number; end_sec: number }[];
   backgroundOverrides?: { idx: number; background_id?: number }[];
+  inputSnapshot?: Record<string, unknown>;
 }
 
 export async function rerenderWorshipVideo(
@@ -341,6 +358,7 @@ export async function rerenderWorshipVideo(
     show_page_numbers: req.showPageNumbers ?? false,
     timing_overrides: req.timingOverrides ?? [],
     background_overrides: req.backgroundOverrides ?? [],
+    input_snapshot: req.inputSnapshot,
   });
   return data;
 }
@@ -378,6 +396,7 @@ export async function createWorshipVideo(
   secondaryFontSize?: number,
   lineSpacingMultiplier?: number,
   showPageNumbers: boolean = false,
+  inputSnapshot?: Record<string, unknown>,
 ): Promise<VideoJobStatus> {
   const formData = new FormData();
   formData.append('analysis_id', analysisId);
@@ -407,6 +426,9 @@ export async function createWorshipVideo(
   if (showPageNumbers) {
     formData.append('show_page_numbers', 'true');
   }
+  if (inputSnapshot) {
+    formData.append('input_snapshot', JSON.stringify(inputSnapshot));
+  }
   const { data } = await api.post<VideoJobStatus>('/videos/create', formData);
   return data;
 }
@@ -418,4 +440,71 @@ export async function getVideoJob(jobId: string): Promise<VideoJobStatus> {
 
 export function getVideoDownloadUrl(filename: string): string {
   return `/api/videos/download/${filename}`;
+}
+
+// --- Songs Library / history ----------------------------------------------
+
+export type LibraryItemType = 'ppt' | 'video';
+export type LibrarySourcePage = 'lyrics' | 'youtube' | 'ocr' | 'worship-video';
+
+export interface LibraryItem {
+  id: number;
+  item_type: LibraryItemType;
+  source_page: LibrarySourcePage;
+  title: string;
+  language: string | null;
+  filename: string | null;
+  analysis_id: string | null;
+  input_snapshot: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface LibraryItemDetail extends LibraryItem {
+  file_exists: boolean;
+  analysis_exists: boolean;
+}
+
+export async function listLibrary(
+  search: string = '',
+  itemType: LibraryItemType | '' = '',
+): Promise<LibraryItem[]> {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (itemType) params.set('item_type', itemType);
+  const { data } = await api.get<LibraryItem[]>(`/library?${params}`);
+  return data;
+}
+
+export async function getLibraryItem(id: number): Promise<LibraryItemDetail> {
+  const { data } = await api.get<LibraryItemDetail>(`/library/${id}`);
+  return data;
+}
+
+export async function deleteLibraryItem(id: number): Promise<void> {
+  await api.delete(`/library/${id}`);
+}
+
+// --- LLM settings / status ------------------------------------------------
+
+export interface LLMProviderInfo {
+  key: string;
+  label: string;
+  env_var: string | null;
+  get_key_url: string;
+  supports_text: boolean;
+  supports_vision: boolean;
+  configured: boolean;
+  default_text_model: string;
+  default_vision_model: string;
+}
+
+export interface LLMStatusResponse {
+  active: { text_provider: string; vision_provider: string };
+  env_defaults: { text_provider: string; vision_provider: string };
+  providers: LLMProviderInfo[];
+}
+
+export async function getLLMStatus(): Promise<LLMStatusResponse> {
+  const { data } = await api.get<LLMStatusResponse>('/llm/status');
+  return data;
 }

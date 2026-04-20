@@ -48,44 +48,28 @@ def ocr_image_local(image_path: Path) -> str | None:
 
 
 def ocr_image(image_path: Path, session_id: str = "") -> str:
-    """OCR with local-first strategy: PaddleOCR → Gemini fallback."""
-    # Try local first
-    text = ocr_image_local(image_path)
-    if text:
-        return text
+    """OCR with LLM-first strategy.
 
-    # Fallback to Gemini
+    Vision LLMs (qwen3-vl, Gemini, etc.) can semantically filter out musical
+    notation / chord symbols / page meta — something PaddleOCR can't do on
+    sheet music images. So try the configured vision LLM first; fall back to
+    PaddleOCR only when the LLM is disabled or errors out.
+    """
     try:
-        import base64
-        from app.config import settings
-        if not settings.GOOGLE_API_KEY:
-            return ""
-
-        from google import genai
-        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-
-        b64 = base64.b64encode(image_path.read_bytes()).decode()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[{
-                "role": "user",
-                "parts": [
-                    {"inline_data": {"mime_type": "image/jpeg", "data": b64}},
-                    {"text": "Extract ONLY the Chinese lyrics text visible in this image. Output ONLY the text, nothing else. If no Chinese text, output NONE."},
-                ],
-            }],
-        )
-
-        if session_id:
-            from app.services.usage_tracker import track_call
-            track_call(session_id, "ocr_fallback", response)
-
-        result = response.text.strip()
-        if result and result != "NONE":
-            logger.info(f"Gemini OCR fallback used for {image_path.name}")
-            return result
-
+        from app.services import llm_service
+        if llm_service.is_vision_enabled():
+            result = llm_service.generate_from_image(
+                image_path.read_bytes(),
+                "image/jpeg",
+                "Extract ONLY the Chinese lyrics text visible in this image. "
+                "Output ONLY the text, nothing else. If no Chinese text, output NONE.",
+                session_id=session_id,
+                action="ocr",
+            )
+            if result and result != "NONE":
+                return result
     except Exception as e:
-        logger.debug(f"Gemini OCR fallback failed: {e}")
+        logger.debug(f"Vision LLM OCR failed, falling back to PaddleOCR: {e}")
 
-    return ""
+    text = ocr_image_local(image_path)
+    return text or ""

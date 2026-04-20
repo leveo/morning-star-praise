@@ -5,6 +5,7 @@ import SlideDeck from '../components/ppt/SlideDeck';
 import UsageBadge from '../components/shared/UsageBadge';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
+import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import { useUsageTracker } from '../hooks/useUsageTracker';
 import {
   parseLyrics,
@@ -33,11 +34,12 @@ export default function OcrPage() {
     'ocr.language',
     'en',
   );
-  const [maxLines, setMaxLines] = usePersistedState('ocr.maxLines', 6);
-  const [maxWidth, setMaxWidth] = usePersistedState('ocr.maxWidth', 12);
+  const template = useTemplateDefaults();
+  const [maxLines, setMaxLines] = usePersistedState('ocr.maxLines', template.maxLinesPerSlide);
+  const [maxWidth, setMaxWidth] = usePersistedState('ocr.maxWidth', template.maxWidthPerRow);
   const [primaryFontSize, setPrimaryFontSize] = usePersistedState<number | null>(
     'ocr.primaryFontSize',
-    null,
+    template.primaryFontSize,
   );
   const [secondaryFontSize, setSecondaryFontSize] = usePersistedState<number | null>(
     'ocr.secondaryFontSize',
@@ -45,7 +47,7 @@ export default function OcrPage() {
   );
   const [lineSpacing, setLineSpacing] = usePersistedState<number | null>(
     'ocr.lineSpacing',
-    null,
+    template.lineSpacing,
   );
   const [selectedBgIds, setSelectedBgIds] = usePersistedState<number[]>('ocr.selectedBgIds', []);
 
