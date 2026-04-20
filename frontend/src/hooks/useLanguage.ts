@@ -189,9 +189,14 @@ type TextDict = {
     maxChars: string;
     maxSlides: string;
     noLimit: string;
+    excludeTitle: string;
+    excludeTitleHint: string;
     primaryFontSize: string;
     lineSpacing: string;
     showPageNumbers: string;
+    paddingStyle: string;
+    paddingStyleDark: string;
+    paddingStyleLight: string;
     auto: string;
     save: string;
     saved: string;
@@ -200,10 +205,8 @@ type TextDict = {
     sectionDefaults: string;
     sectionLLM: string;
     llmDescription: string;
-    modeDefault: string;
     modeAPI: string;
     modeLocal: string;
-    modeDefaultHint: string;
     modeAPIHint: string;
     modeLocalHint: string;
     textProvider: string;
@@ -211,6 +214,10 @@ type TextDict = {
     textModel: string;
     visionModel: string;
     modelPlaceholderDefault: string;
+    modelsDir: string;
+    modelsDirHint: string;
+    modelsRefresh: string;
+    modelsUnavailable: string;
     providerConfigured: string;
     providerMissingKey: string;
     howToConfigure: string;
@@ -539,10 +546,15 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       maxLines: '每张最多行数',
       maxChars: '每行最多字符',
       maxSlides: '最多 slide 数',
-      noLimit: '0 表示不限',
+      noLimit: '留空或 0 = 自动（不限制）',
+      excludeTitle: '不包括标题',
+      excludeTitleHint: '勾选时，"最多 slide 数"只数内容 slide，标题页不算。取消勾选则总数含标题。',
       primaryFontSize: '主字号（pt）',
       lineSpacing: '行距倍数',
       showPageNumbers: '页码',
+      paddingStyle: '底色风格',
+      paddingStyleDark: '深底白字',
+      paddingStyleLight: '浅底黑字',
       auto: '自动（按语言）',
       save: '保存',
       saved: '已保存',
@@ -550,18 +562,20 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       resetConfirm: '确认恢复出厂默认？将清除你保存的设置。',
       sectionDefaults: '默认模板',
       sectionLLM: 'LLM 配置',
-      llmDescription: '切换 OCR / 翻译 / YouTube 帧分析用哪家 LLM。纯本地模式用 Ollama（需先 ollama pull 模型）；API 模式用云端服务需要 API key。API key 永远只存在后端的 .env，不会发送到前端。',
-      modeDefault: '跟随服务器默认',
+      llmDescription: '切换 OCR / 翻译 / YouTube 帧分析用哪家 LLM。本地模式用 Ollama；API 模式用云端服务，需要 API key。API key 永远只存在后端的 .env，不会发送到前端。',
       modeAPI: 'API 模式（云端）',
       modeLocal: '本地模式（Ollama）',
-      modeDefaultHint: '使用后端 .env 里配置的 provider。',
       modeAPIHint: '为文本和视觉各选一家云端 provider。需要对应 API key 在后端 .env 里。',
       modeLocalHint: '所有 LLM 调用走本机 Ollama。零云端成本、完全离线。',
       textProvider: '文本 provider',
       visionProvider: '视觉 provider',
       textModel: '文本模型',
       visionModel: '视觉模型',
-      modelPlaceholderDefault: '留空 = provider 默认',
+      modelPlaceholderDefault: '请选择',
+      modelsDir: 'Ollama 模型目录',
+      modelsDirHint: '可选：如果你把 Ollama 模型放在非默认路径（比如外接 SSD），选择目录告诉系统。留空用 Ollama 默认位置。\n默认路径 · macOS: /Users/<你的用户名>/.ollama/models   ·   Windows: C:\\Users\\<Your User Name>\\.ollama\\models',
+      modelsRefresh: '刷新',
+      modelsUnavailable: '未检测到运行中的 Ollama（默认 http://localhost:11434）',
       providerConfigured: '已就绪',
       providerMissingKey: '缺少 API key',
       howToConfigure: '如何配置',
@@ -798,10 +812,15 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       maxLines: 'Max lines per slide',
       maxChars: 'Max chars per row',
       maxSlides: 'Max slides',
-      noLimit: '0 means no limit',
+      noLimit: 'Blank or 0 = auto (no cap)',
+      excludeTitle: 'Exclude title from count',
+      excludeTitleHint: 'When checked, "Max slides" counts content slides only; the title page is extra. When unchecked, the total includes the title.',
       primaryFontSize: 'Primary font size (pt)',
       lineSpacing: 'Line spacing multiplier',
       showPageNumbers: 'Show page numbers',
+      paddingStyle: 'Backdrop style',
+      paddingStyleDark: 'Dark backdrop, white text',
+      paddingStyleLight: 'Light backdrop, black text',
       auto: 'Auto (by language)',
       save: 'Save',
       saved: 'Saved',
@@ -809,18 +828,20 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       resetConfirm: 'Reset to factory defaults? Saved settings will be cleared.',
       sectionDefaults: 'Default Template',
       sectionLLM: 'LLM Configuration',
-      llmDescription: 'Pick which LLM powers OCR / translation / YouTube frame analysis. Local mode uses Ollama (pull the model first); API mode uses a cloud provider and needs its API key in the backend .env. API keys never leave the server.',
-      modeDefault: 'Follow server default',
+      llmDescription: 'Pick which LLM powers OCR / translation / YouTube frame analysis. Local mode uses Ollama; API mode uses a cloud provider and needs its API key in the backend .env. API keys never leave the server.',
       modeAPI: 'API mode (cloud)',
       modeLocal: 'Local mode (Ollama)',
-      modeDefaultHint: 'Use whichever provider the backend .env configures.',
       modeAPIHint: 'Pick a cloud provider for text and for vision. Each needs its API key in the backend .env.',
       modeLocalHint: 'Route all LLM calls through your local Ollama. Zero cost, fully offline.',
       textProvider: 'Text provider',
       visionProvider: 'Vision provider',
       textModel: 'Text model',
       visionModel: 'Vision model',
-      modelPlaceholderDefault: 'Leave blank for provider default',
+      modelPlaceholderDefault: 'Pick one',
+      modelsDir: 'Ollama models directory',
+      modelsDirHint: 'Optional: if you keep Ollama models in a non-default location (e.g. external SSD), pick the folder. Leave blank for the Ollama default.\nDefault path · macOS: /Users/<Your User Name>/.ollama/models   ·   Windows: C:\\Users\\<Your User Name>\\.ollama\\models',
+      modelsRefresh: 'Refresh',
+      modelsUnavailable: 'No running Ollama detected (default http://localhost:11434)',
       providerConfigured: 'Ready',
       providerMissingKey: 'API key missing',
       howToConfigure: 'How to configure',

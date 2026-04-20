@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel
+
+PaddingStyle = Literal["dark", "light"]
 
 
 class SlideData(BaseModel):
@@ -31,6 +35,9 @@ class PPTGenerateRequest(BaseModel):
     primary_font_size: int | None = None
     secondary_font_size: int | None = None
     line_spacing_multiplier: float | None = None
+    # 'dark' = black semi-transparent overlay + white text (default);
+    # 'light' = white semi-transparent overlay + black text.
+    padding_style: PaddingStyle = "dark"
     # Library / history metadata. Optional — when provided, the successful
     # generation is recorded in ppt_library so the Songs Library page can
     # restore this session later. ``source_page`` identifies which frontend

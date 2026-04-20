@@ -297,6 +297,7 @@ export default function WorshipVideoPage() {
         lineSpacing ?? undefined,
         showPageNumbers,
         snapshot,
+        template.paddingStyle,
       );
       setJob(created);
       startPolling(created.job_id);
@@ -819,6 +820,7 @@ export default function WorshipVideoPage() {
           secondaryFontSize={secondaryFontSize ?? undefined}
           lineSpacingMultiplier={lineSpacing ?? undefined}
           showPageNumbers={showPageNumbers}
+          paddingStyle={template.paddingStyle}
           selectedBgIds={selectedBgIds}
           extractedBgFilenames={
             usePptBackgrounds && extractedBgs.length > 0

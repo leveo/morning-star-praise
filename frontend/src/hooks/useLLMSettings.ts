@@ -3,25 +3,30 @@ import { createPersistedGlobalState } from './usePersistedGlobalState';
 /** Per-user LLM routing — stored in localStorage, sent to the backend via
  *  X-LLM-* headers on every /api call. API keys never leave the backend;
  *  only provider names and model names travel. */
-export type LLMMode = 'default' | 'api' | 'local';
+export type LLMMode = 'local' | 'api';
 
 export interface LLMSettings {
-  /** 'default' = fall through to server env; 'api' = use one of the cloud
-   *  providers chosen by ``textProvider``/``visionProvider``; 'local' = use
-   *  Ollama with the configured ``textModel``/``visionModel``. */
+  /** 'local' = use Ollama with the configured text/vision models;
+   *  'api' = use one of the cloud providers chosen by textProvider/visionProvider. */
   mode: LLMMode;
   textProvider: string;      // e.g. 'gemini', 'openai'
   visionProvider: string;
   textModel: string;          // empty = provider default
   visionModel: string;        // empty = provider default
+  /** Optional: path to the Ollama models folder. Informational / for future
+   *  features that might launch a local model runtime directly. Not used
+   *  for routing today — routing goes through whatever Ollama server is
+   *  on OLLAMA_BASE_URL, which reads its own OLLAMA_MODELS env var. */
+  ollamaModelsDir: string;
 }
 
 export const DEFAULT_LLM_SETTINGS: LLMSettings = {
-  mode: 'default',
+  mode: 'local',
   textProvider: '',
   visionProvider: '',
   textModel: '',
   visionModel: '',
+  ollamaModelsDir: '',
 };
 
 const store = createPersistedGlobalState<LLMSettings>({
@@ -30,11 +35,9 @@ const store = createPersistedGlobalState<LLMSettings>({
   factoryDefaults: DEFAULT_LLM_SETTINGS,
 });
 
-/** Derive the X-LLM-* headers to attach to outgoing /api requests. Returns
- *  an empty object when the user's mode is 'default' — in that case the
- *  backend uses its env configuration unchanged. */
+/** Derive the X-LLM-* headers for the current mode. Local forces Ollama on
+ *  both modalities; API forwards the user's per-modality provider choice. */
 export function resolveLLMHeaders(s: LLMSettings): Record<string, string> {
-  if (s.mode === 'default') return {};
   const headers: Record<string, string> = {};
   if (s.mode === 'local') {
     headers['X-LLM-Text-Provider'] = 'ollama';
@@ -43,7 +46,6 @@ export function resolveLLMHeaders(s: LLMSettings): Record<string, string> {
     if (s.visionModel) headers['X-LLM-Vision-Model'] = s.visionModel;
     return headers;
   }
-  // 'api' — route each modality to the user's chosen cloud provider.
   if (s.textProvider) headers['X-LLM-Text-Provider'] = s.textProvider;
   if (s.visionProvider) headers['X-LLM-Vision-Provider'] = s.visionProvider;
   if (s.textModel) headers['X-LLM-Text-Model'] = s.textModel;

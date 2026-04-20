@@ -54,7 +54,12 @@ export default function LyricsPage() {
   const template = useTemplateDefaults();
   const [maxLines, setMaxLines] = usePersistedState('lyrics.maxLines', template.maxLinesPerSlide);
   const [maxSlides, setMaxSlides] = usePersistedState('lyrics.maxSlides', template.maxSlides);
+  const [excludeTitleSlide] = usePersistedState('lyrics.excludeTitle', template.excludeTitleSlide);
   const [maxWidth, setMaxWidth] = usePersistedState('lyrics.maxWidth', template.maxWidthPerRow);
+  // When the cap includes the title slide, reserve 1 of the budget for it.
+  // Clamp the remainder to 0 (not 1) so ``maxSlides=1`` + includes-title means
+  // "title only, no content" rather than silently giving 2 total.
+  const effectiveMaxSlides = maxSlides > 0 && !excludeTitleSlide ? Math.max(0, maxSlides - 1) : maxSlides;
   const [primaryFontSize, setPrimaryFontSize] = usePersistedState<number | null>(
     'lyrics.primaryFontSize',
     template.primaryFontSize,
@@ -97,8 +102,8 @@ export default function LyricsPage() {
 
       const result =
         addTranslation && translatedLyrics.trim()
-          ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, maxSlides, maxWidth)
-          : await parseLyrics(primaryText, language, maxLines, maxSlides, maxWidth);
+          ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, effectiveMaxSlides, maxWidth)
+          : await parseLyrics(primaryText, language, maxLines, effectiveMaxSlides, maxWidth);
       setSlides(result.slides);
     } catch (err) {
       setError(tl.errorParse);
@@ -128,6 +133,7 @@ export default function LyricsPage() {
         primaryFontSize ?? undefined,
         secondaryFontSize ?? undefined,
         lineSpacing ?? undefined,
+        template.paddingStyle,
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);
@@ -151,8 +157,8 @@ export default function LyricsPage() {
 
       const parsed =
         addTranslation && translatedLyrics.trim()
-          ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, maxSlides, maxWidth)
-          : await parseLyrics(primaryText, language, maxLines, maxSlides, maxWidth);
+          ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, effectiveMaxSlides, maxWidth)
+          : await parseLyrics(primaryText, language, maxLines, effectiveMaxSlides, maxWidth);
       const finalSlides = parsed.slides;
 
       setSlides(finalSlides);
@@ -162,6 +168,7 @@ export default function LyricsPage() {
         primaryFontSize ?? undefined,
         secondaryFontSize ?? undefined,
         lineSpacing ?? undefined,
+        template.paddingStyle,
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);
@@ -200,7 +207,7 @@ export default function LyricsPage() {
       const converted = await convertChinese(lyrics, target);
       setLyrics(converted);
       if (slides.length > 0) {
-        const parsed = await parseLyrics(converted, newLang, maxLines, maxSlides);
+        const parsed = await parseLyrics(converted, newLang, maxLines, effectiveMaxSlides);
         setSlides(parsed.slides);
       }
     } catch {

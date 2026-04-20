@@ -218,6 +218,30 @@ def _set_east_asian_font(run, font_name: str):
     ea.set("typeface", font_name)
 
 
+def _padding_palette(padding_style: str) -> dict:
+    """Overlay + text colors keyed by padding style. Shared between content
+    and title slides so the two can't drift."""
+    if padding_style == "light":
+        return {
+            "overlay": RGBColor(255, 255, 255),
+            "primary": RGBColor(0, 0, 0),
+            "secondary": RGBColor(60, 60, 60),
+            "composer": RGBColor(80, 80, 80),
+            # The light backdrop reads heavier than the dark one at the same
+            # alpha — bump transparency so the background photo shows through.
+            "alpha_text": "55000",
+            "alpha_title": "55000",
+        }
+    return {
+        "overlay": RGBColor(0, 0, 0),
+        "primary": RGBColor(255, 255, 255),
+        "secondary": RGBColor(220, 220, 220),
+        "composer": RGBColor(200, 200, 200),
+        "alpha_text": "40000",
+        "alpha_title": "45000",
+    }
+
+
 def _add_text_with_overlay(
     slide,
     text: str,
@@ -230,8 +254,14 @@ def _add_text_with_overlay(
     primary_font_size: int | None = None,
     secondary_font_size: int | None = None,
     line_spacing_multiplier: float | None = None,
+    padding_style: str = "dark",
 ):
     """Add semi-transparent overlay and centered text to a slide."""
+    palette = _padding_palette(padding_style)
+    overlay_rgb = palette["overlay"]
+    primary_text_rgb = palette["primary"]
+    secondary_text_rgb = palette["secondary"]
+
     # Uniform padding on all sides
     pad = Inches(0.5)
     overlay_left = pad
@@ -247,13 +277,13 @@ def _add_text_with_overlay(
         overlay_height,
     )
     overlay.fill.solid()
-    overlay.fill.fore_color.rgb = RGBColor(0, 0, 0)
+    overlay.fill.fore_color.rgb = overlay_rgb
     a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
     sp_elem = overlay._element
     for srgb in sp_elem.findall(f".//{{{a_ns}}}srgbClr"):
         if "solidFill" in srgb.getparent().tag:
             alpha = etree.SubElement(srgb, f"{{{a_ns}}}alpha")
-            alpha.set("val", "40000")
+            alpha.set("val", palette["alpha_text"])
     overlay.line.fill.background()
 
     # Text box — fills overlay with small inner margin, vertically centered
@@ -346,7 +376,7 @@ def _add_text_with_overlay(
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = line
-        run.font.color.rgb = RGBColor(255, 255, 255)
+        run.font.color.rgb = primary_text_rgb
 
         line_is_zh = contains_chinese(line)
 
@@ -361,7 +391,7 @@ def _add_text_with_overlay(
         if is_secondary_line:
             run.font.size = Pt(secondary_size)
             run.font.bold = False
-            run.font.color.rgb = RGBColor(220, 220, 220)
+            run.font.color.rgb = secondary_text_rgb
             if line_is_zh:
                 run.font.name = "PingFang SC"
                 _set_east_asian_font(run, "PingFang SC")
@@ -381,22 +411,26 @@ def _add_text_with_overlay(
         para_idx += 1
 
 
-def _add_title_slide(slide, title: str, composer: str, language: str, slide_width, slide_height):
+def _add_title_slide(slide, title: str, composer: str, language: str, slide_width, slide_height, *, padding_style: str = "dark"):
     """Add a prominent title slide with song name and composer."""
     is_zh = language.startswith("zh") or contains_chinese(title)
+    palette = _padding_palette(padding_style)
+    overlay_rgb = palette["overlay"]
+    title_rgb = palette["primary"]
+    composer_rgb = palette["composer"]
 
-    # Full-slide dark overlay
+    # Full-slide overlay
     a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
     overlay = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE, 0, 0, slide_width, slide_height,
     )
     overlay.fill.solid()
-    overlay.fill.fore_color.rgb = RGBColor(0, 0, 0)
+    overlay.fill.fore_color.rgb = overlay_rgb
     sp_elem = overlay._element
     for srgb in sp_elem.findall(f".//{{{a_ns}}}srgbClr"):
         if "solidFill" in srgb.getparent().tag:
             alpha_el = etree.SubElement(srgb, f"{{{a_ns}}}alpha")
-            alpha_el.set("val", "45000")
+            alpha_el.set("val", palette["alpha_title"])
     overlay.line.fill.background()
 
     # Title text — size based on character count (60-96pt)
@@ -429,7 +463,7 @@ def _add_title_slide(slide, title: str, composer: str, language: str, slide_widt
     run = p.add_run()
     run.text = title
     run.font.size = Pt(title_size)
-    run.font.color.rgb = RGBColor(255, 255, 255)
+    run.font.color.rgb = title_rgb
     run.font.bold = True
     if is_zh:
         run.font.name = "PingFang SC"
@@ -449,7 +483,7 @@ def _add_title_slide(slide, title: str, composer: str, language: str, slide_widt
         run2 = p2.add_run()
         run2.text = composer
         run2.font.size = Pt(32)
-        run2.font.color.rgb = RGBColor(200, 200, 200)
+        run2.font.color.rgb = composer_rgb
         if is_zh:
             run2.font.name = "PingFang SC"
             _set_east_asian_font(run2, "PingFang SC")
@@ -482,6 +516,7 @@ def generate_pptx(
     primary_font_size: int | None = None,
     secondary_font_size: int | None = None,
     line_spacing_multiplier: float | None = None,
+    padding_style: str = "dark",
 ) -> str:
     """Generate a .pptx file and return the filename."""
     prs = Presentation()
@@ -497,7 +532,7 @@ def generate_pptx(
     slide = prs.slides.add_slide(blank_layout)
     if background_paths:
         _add_background(slide, background_paths[0], slide_width, slide_height)
-    _add_title_slide(slide, title, composer, language, slide_width, slide_height)
+    _add_title_slide(slide, title, composer, language, slide_width, slide_height, padding_style=padding_style)
 
     # Content slides
     for i, slide_data in enumerate(slides):
@@ -517,6 +552,7 @@ def generate_pptx(
             primary_font_size=primary_font_size,
             secondary_font_size=secondary_font_size,
             line_spacing_multiplier=line_spacing_multiplier,
+            padding_style=padding_style,
         )
 
         if show_page_numbers:

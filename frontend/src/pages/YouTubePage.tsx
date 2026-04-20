@@ -179,6 +179,7 @@ export default function YouTubePage() {
         primaryFontSize ?? undefined,
         secondaryFontSize ?? undefined,
         lineSpacing ?? undefined,
+        template.paddingStyle,
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);
@@ -203,6 +204,7 @@ export default function YouTubePage() {
         primaryFontSize ?? undefined,
         secondaryFontSize ?? undefined,
         lineSpacing ?? undefined,
+        template.paddingStyle,
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);

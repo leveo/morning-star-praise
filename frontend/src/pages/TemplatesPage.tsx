@@ -4,13 +4,22 @@ import {
   FACTORY_TEMPLATE_DEFAULTS,
   useTemplateDefaultsEditor,
   type TemplateDefaults,
+  type PaddingStyle,
 } from '../hooks/useTemplateDefaults';
 import {
   DEFAULT_LLM_SETTINGS,
   useLLMSettingsEditor,
   type LLMSettings,
 } from '../hooks/useLLMSettings';
-import { getLLMStatus, type LLMProviderInfo, type LLMStatusResponse } from '../api/client';
+import {
+  getLLMStatus,
+  getOllamaModels,
+  type LLMProviderInfo,
+  type LLMStatusResponse,
+  type OllamaModels,
+} from '../api/client';
+
+type LLMLabels = typeof UI_TEXT['zh']['templates'];
 
 export default function TemplatesPage() {
   const [uiLanguage] = useUILanguage();
@@ -18,17 +27,22 @@ export default function TemplatesPage() {
   const { template, save: saveTemplate, reset: resetTemplate } = useTemplateDefaultsEditor();
   const { settings: llmSettings, save: saveLLM, reset: resetLLM } = useLLMSettingsEditor();
 
-  // Draft is seeded from the stored value ONCE on mount. Re-syncing on every
-  // reader update would stomp the user's in-progress edits every time a
-  // sibling tab / component fires a storage event. Reset() explicitly
-  // overwrites the draft by clearing storage + re-mounting the form.
+  // One-shot draft seeding — re-syncing on reader updates would stomp the
+  // user's in-progress edits every time a sibling tab fires a storage event.
   const [templateDraft, setTemplateDraft] = useState<TemplateDefaults>(() => template);
   const [llmDraft, setLLMDraft] = useState<LLMSettings>(() => llmSettings);
   const [status, setStatus] = useState<LLMStatusResponse | null>(null);
-  const [savedFlash, setSavedFlash] = useState(false);
+  const [ollama, setOllama] = useState<OllamaModels | null>(null);
+
+  const refreshOllama = () => {
+    getOllamaModels().then(setOllama).catch(() => setOllama(null));
+  };
 
   useEffect(() => {
-    getLLMStatus().then(setStatus).catch(() => setStatus(null));
+    Promise.all([
+      getLLMStatus().then(setStatus).catch(() => setStatus(null)),
+      getOllamaModels().then(setOllama).catch(() => setOllama(null)),
+    ]);
   }, []);
 
   const setTpl = <K extends keyof TemplateDefaults>(key: K, value: TemplateDefaults[K]) =>
@@ -36,19 +50,10 @@ export default function TemplatesPage() {
   const setLLM = <K extends keyof LLMSettings>(key: K, value: LLMSettings[K]) =>
     setLLMDraft((d) => ({ ...d, [key]: value }));
 
-  const handleSave = () => {
-    saveTemplate(templateDraft);
-    saveLLM(llmDraft);
-    setSavedFlash(true);
-    setTimeout(() => setSavedFlash(false), 1500);
-  };
-
-  const handleReset = () => {
+  const handleResetAll = () => {
     if (!window.confirm(t.resetConfirm)) return;
     resetTemplate();
     resetLLM();
-    // Reflect the reset in the draft too — the reader hooks will re-fire,
-    // but the draft is intentionally one-shot so we set it directly.
     setTemplateDraft(FACTORY_TEMPLATE_DEFAULTS);
     setLLMDraft(DEFAULT_LLM_SETTINGS);
   };
@@ -60,123 +65,261 @@ export default function TemplatesPage() {
         <p className="text-xs text-slate-400 mt-2 leading-relaxed">{t.description}</p>
       </div>
 
-      <Section title={t.sectionDefaults}>
-        <div className="grid grid-cols-2 gap-4">
-          <NumberField
-            label={t.maxLines}
-            value={templateDraft.maxLinesPerSlide}
-            onChange={(v) => setTpl('maxLinesPerSlide', Math.max(1, v))}
-            min={1}
-          />
-          <NumberField
-            label={t.maxChars}
-            value={templateDraft.maxWidthPerRow}
-            onChange={(v) => setTpl('maxWidthPerRow', Math.max(1, v))}
-            min={1}
-          />
-          <NumberField
-            label={t.maxSlides}
-            value={templateDraft.maxSlides}
-            onChange={(v) => setTpl('maxSlides', Math.max(0, v))}
-            min={0}
-            hint={t.noLimit}
-          />
-          <NullableNumberField
-            label={t.primaryFontSize}
-            value={templateDraft.primaryFontSize}
-            onChange={(v) => setTpl('primaryFontSize', v)}
-            placeholder={t.auto}
-            step={1}
-          />
-          <NullableNumberField
-            label={t.lineSpacing}
-            value={templateDraft.lineSpacing}
-            onChange={(v) => setTpl('lineSpacing', v)}
-            placeholder={t.auto}
-            step={0.1}
-          />
-          <div>
-            <label className="flex items-center gap-2 text-xs text-slate-300 mt-6">
-              <input
-                type="checkbox"
-                checked={templateDraft.showPageNumbers}
-                onChange={(e) => setTpl('showPageNumbers', e.target.checked)}
-                className="accent-gold-500"
-              />
-              {t.showPageNumbers}
-            </label>
-          </div>
-        </div>
-      </Section>
+      <TemplateDefaultsSection
+        draft={templateDraft}
+        setField={setTpl}
+        onSave={() => saveTemplate(templateDraft)}
+        labels={t}
+      />
 
-      <Section title={t.sectionLLM}>
-        <p className="text-xs text-slate-400 leading-relaxed">{t.llmDescription}</p>
+      <LLMSection
+        draft={llmDraft}
+        setField={setLLM}
+        status={status}
+        ollama={ollama}
+        onRefreshOllama={refreshOllama}
+        onSave={() => saveLLM(llmDraft)}
+        labels={t}
+      />
 
-        <div className="flex flex-col gap-2">
-          {(['default', 'api', 'local'] as const).map((m) => (
-            <ModeRadio
-              key={m}
-              checked={llmDraft.mode === m}
-              onSelect={() => setLLM('mode', m)}
-              title={
-                m === 'default' ? t.modeDefault : m === 'api' ? t.modeAPI : t.modeLocal
-              }
-              hint={
-                m === 'default'
-                  ? t.modeDefaultHint
-                  : m === 'api'
-                    ? t.modeAPIHint
-                    : t.modeLocalHint
-              }
-            />
-          ))}
-        </div>
-
-        {llmDraft.mode === 'api' && (
-          <APIProviderPicker
-            draft={llmDraft}
-            onChange={setLLM}
-            status={status}
-            labels={t}
-          />
-        )}
-        {llmDraft.mode === 'local' && (
-          <LocalProviderPicker draft={llmDraft} onChange={setLLM} labels={t} />
-        )}
-        {llmDraft.mode !== 'default' && (
-          <p className="text-xs text-slate-500 italic">{t.restartRequired}</p>
-        )}
-      </Section>
-
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-end">
         <button
           type="button"
-          onClick={handleReset}
+          onClick={handleResetAll}
           className="text-xs text-slate-400 hover:text-slate-200"
         >
           {t.resetToFactory}
         </button>
-        <div className="flex items-center gap-3">
-          {savedFlash && <span className="text-xs text-green-400">✓ {t.saved}</span>}
-          <button
-            type="button"
-            onClick={handleSave}
-            className="bg-gold-600 hover:bg-gold-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            {t.save}
-          </button>
-        </div>
       </div>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function TemplateDefaultsSection({
+  draft, setField, onSave, labels,
+}: {
+  draft: TemplateDefaults;
+  setField: <K extends keyof TemplateDefaults>(k: K, v: TemplateDefaults[K]) => void;
+  onSave: () => void;
+  labels: LLMLabels;
+}) {
+  return (
+    <SectionWithSave title={labels.sectionDefaults} onSave={onSave} saveLabel={labels.save} savedLabel={labels.saved}>
+      <div className="grid grid-cols-2 gap-4">
+        <NumberField
+          label={labels.maxLines}
+          value={draft.maxLinesPerSlide}
+          onChange={(v) => setField('maxLinesPerSlide', Math.max(1, v))}
+          min={1}
+        />
+        <NumberField
+          label={labels.maxChars}
+          value={draft.maxWidthPerRow}
+          onChange={(v) => setField('maxWidthPerRow', Math.max(1, v))}
+          min={1}
+        />
+        <div>
+          <NumberField
+            label={labels.maxSlides}
+            value={draft.maxSlides}
+            onChange={(v) => setField('maxSlides', Math.max(0, v))}
+            min={0}
+            hint={labels.noLimit}
+          />
+          <label className="flex items-start gap-2 text-xs text-slate-300 mt-2">
+            <input
+              type="checkbox"
+              checked={draft.excludeTitleSlide}
+              onChange={(e) => setField('excludeTitleSlide', e.target.checked)}
+              className="accent-gold-500 mt-0.5"
+            />
+            <span>
+              {labels.excludeTitle}
+              <span className="block text-slate-500 text-[11px]">{labels.excludeTitleHint}</span>
+            </span>
+          </label>
+        </div>
+        <NullableNumberField
+          label={labels.primaryFontSize}
+          value={draft.primaryFontSize}
+          onChange={(v) => setField('primaryFontSize', v)}
+          placeholder={labels.auto}
+          step={1}
+        />
+        <NullableNumberField
+          label={labels.lineSpacing}
+          value={draft.lineSpacing}
+          onChange={(v) => setField('lineSpacing', v)}
+          placeholder={labels.auto}
+          step={0.1}
+        />
+        <div>
+          <label className="flex items-center gap-2 text-xs text-slate-300 mt-6">
+            <input
+              type="checkbox"
+              checked={draft.showPageNumbers}
+              onChange={(e) => setField('showPageNumbers', e.target.checked)}
+              className="accent-gold-500"
+            />
+            {labels.showPageNumbers}
+          </label>
+        </div>
+      </div>
+
+      <PaddingStylePicker
+        value={draft.paddingStyle}
+        onChange={(v) => setField('paddingStyle', v)}
+        labels={labels}
+      />
+    </SectionWithSave>
+  );
+}
+
+function PaddingStylePicker({
+  value, onChange, labels,
+}: {
+  value: PaddingStyle;
+  onChange: (v: PaddingStyle) => void;
+  labels: LLMLabels;
+}) {
+  const options: { key: PaddingStyle; label: string; preview: React.ReactNode }[] = [
+    {
+      key: 'dark',
+      label: labels.paddingStyleDark,
+      preview: (
+        <div className="w-full h-12 rounded bg-slate-900 flex items-center justify-center text-white text-xs font-bold">
+          歌词 / Lyrics
+        </div>
+      ),
+    },
+    {
+      key: 'light',
+      label: labels.paddingStyleLight,
+      preview: (
+        <div className="w-full h-12 rounded bg-slate-100 flex items-center justify-center text-slate-900 text-xs font-bold">
+          歌词 / Lyrics
+        </div>
+      ),
+    },
+  ];
+  return (
+    <div>
+      <label className="text-xs text-slate-400 block mb-2">{labels.paddingStyle}</label>
+      <div className="grid grid-cols-2 gap-3">
+        {options.map((o) => (
+          <OptionCard
+            key={o.key}
+            selected={value === o.key}
+            onSelect={() => onChange(o.key)}
+            className="p-2"
+          >
+            <div className="text-slate-200 font-medium mb-1.5">{o.label}</div>
+            {o.preview}
+          </OptionCard>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LLMSection({
+  draft, setField, status, ollama, onRefreshOllama, onSave, labels,
+}: {
+  draft: LLMSettings;
+  setField: <K extends keyof LLMSettings>(k: K, v: LLMSettings[K]) => void;
+  status: LLMStatusResponse | null;
+  ollama: OllamaModels | null;
+  onRefreshOllama: () => void;
+  onSave: () => void;
+  labels: LLMLabels;
+}) {
+  return (
+    <SectionWithSave title={labels.sectionLLM} onSave={onSave} saveLabel={labels.save} savedLabel={labels.saved}>
+      <p className="text-xs text-slate-400 leading-relaxed">{labels.llmDescription}</p>
+
+      <div className="flex flex-col gap-2">
+        {(['local', 'api'] as const).map((m) => (
+          <ModeRadio
+            key={m}
+            checked={draft.mode === m}
+            onSelect={() => setField('mode', m)}
+            title={m === 'local' ? labels.modeLocal : labels.modeAPI}
+            hint={m === 'local' ? labels.modeLocalHint : labels.modeAPIHint}
+          />
+        ))}
+      </div>
+
+      {draft.mode === 'api' && (
+        <APIProviderPicker draft={draft} onChange={setField} status={status} labels={labels} />
+      )}
+      {draft.mode === 'local' && (
+        <LocalProviderPicker
+          draft={draft}
+          onChange={setField}
+          ollama={ollama}
+          onRefresh={onRefreshOllama}
+          labels={labels}
+        />
+      )}
+
+      <p className="text-xs text-slate-500 italic">{labels.restartRequired}</p>
+    </SectionWithSave>
+  );
+}
+
+function SectionWithSave({
+  title, children, onSave, saveLabel, savedLabel,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onSave: () => void;
+  saveLabel: string;
+  savedLabel: string;
+}) {
+  const [flash, setFlash] = useState(false);
+  const handleSave = () => {
+    onSave();
+    setFlash(true);
+    setTimeout(() => setFlash(false), 1500);
+  };
   return (
     <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-5 space-y-4">
       <h3 className="text-sm font-medium text-slate-200">{title}</h3>
       {children}
+      <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-700">
+        {flash && <span className="text-xs text-green-400">✓ {savedLabel}</span>}
+        <button
+          type="button"
+          onClick={handleSave}
+          className="bg-gold-600 hover:bg-gold-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+        >
+          {saveLabel}
+        </button>
+      </div>
     </div>
+  );
+}
+
+function OptionCard({
+  selected, onSelect, className = '', children,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`text-left rounded-lg border text-xs transition-colors ${
+        selected
+          ? 'border-gold-500 bg-gold-900/20'
+          : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+      } ${className}`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -189,15 +332,7 @@ function ModeRadio({
   hint: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`text-left px-3 py-2 rounded-lg border text-xs transition-colors ${
-        checked
-          ? 'border-gold-500 bg-gold-900/20'
-          : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
-      }`}
-    >
+    <OptionCard selected={checked} onSelect={onSelect} className="px-3 py-2">
       <div className="flex items-center gap-2">
         <span
           className={`inline-block w-3 h-3 rounded-full border ${
@@ -207,11 +342,9 @@ function ModeRadio({
         <span className="text-slate-100 font-medium">{title}</span>
       </div>
       <p className="text-slate-400 mt-1 ml-5">{hint}</p>
-    </button>
+    </OptionCard>
   );
 }
-
-type LLMLabels = typeof UI_TEXT['zh']['templates'];
 
 function APIProviderPicker({
   draft, onChange, status, labels,
@@ -228,6 +361,7 @@ function APIProviderPicker({
   const findMeta = (key: string) => apiProviders.find((p) => p.key === key);
   const textMeta = findMeta(draft.textProvider);
   const visionMeta = findMeta(draft.visionProvider);
+  const showVisionHint = visionMeta && !visionMeta.configured && visionMeta.key !== textMeta?.key;
 
   return (
     <div className="space-y-4">
@@ -257,36 +391,87 @@ function APIProviderPicker({
           onChange={(v) => onChange('visionModel', v)}
         />
       </div>
-      {textMeta && !textMeta.configured && (
-        <ConfigureHint meta={textMeta} labels={labels} />
-      )}
-      {visionMeta && !visionMeta.configured && visionMeta.key !== textMeta?.key && (
-        <ConfigureHint meta={visionMeta} labels={labels} />
-      )}
+      {textMeta && !textMeta.configured && <ConfigureHint meta={textMeta} labels={labels} />}
+      {showVisionHint && visionMeta && <ConfigureHint meta={visionMeta} labels={labels} />}
     </div>
   );
 }
 
 function LocalProviderPicker({
-  draft, onChange, labels,
+  draft, onChange, ollama, onRefresh, labels,
 }: {
   draft: LLMSettings;
   onChange: <K extends keyof LLMSettings>(k: K, v: LLMSettings[K]) => void;
+  ollama: OllamaModels | null;
+  onRefresh: () => void;
   labels: LLMLabels;
 }) {
+  const textOptions = ollama?.available ? ollama.text : [];
+  const visionOptions = ollama?.available ? ollama.vision : [];
+
   return (
-    <div className="grid grid-cols-2 gap-4">
-      <ModelField
-        label={labels.textModel}
-        value={draft.textModel}
-        placeholder="gemma4:e4b"
-        onChange={(v) => onChange('textModel', v)}
+    <div className="space-y-4">
+      <ModelsDirectoryPicker
+        value={draft.ollamaModelsDir}
+        onChange={(v) => onChange('ollamaModelsDir', v)}
+        labels={labels}
       />
-      <ModelField
-        label={labels.visionModel}
-        value={draft.visionModel}
-        placeholder="qwen3-vl:8b"
-        onChange={(v) => onChange('visionModel', v)}
+
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-slate-400">
+          {ollama?.available
+            ? `${textOptions.length} models detected`
+            : labels.modelsUnavailable}
+        </span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="text-xs text-slate-400 hover:text-slate-200 underline"
+        >
+          {labels.modelsRefresh}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <ModelDropdown
+          label={labels.textModel}
+          value={draft.textModel}
+          options={textOptions}
+          placeholder={labels.modelPlaceholderDefault}
+          onChange={(v) => onChange('textModel', v)}
+        />
+        <ModelDropdown
+          label={labels.visionModel}
+          value={draft.visionModel}
+          options={visionOptions}
+          placeholder={labels.modelPlaceholderDefault}
+          onChange={(v) => onChange('visionModel', v)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ModelsDirectoryPicker({
+  value, onChange, labels,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  labels: LLMLabels;
+}) {
+  // A webkitdirectory picker would enumerate every blob in ``~/.ollama/models``
+  // (multi-GB) just to capture a path string — the browser hangs. The field is
+  // informational today, so a plain text input is the right primitive.
+  return (
+    <div>
+      <label className="text-xs text-slate-400">{labels.modelsDir}</label>
+      <p className="text-[11px] text-slate-500 mb-1.5 whitespace-pre-line">{labels.modelsDirHint}</p>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="~/.ollama/models"
+        className="bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm w-full focus:outline-none focus:ring-2 focus:ring-gold-500"
       />
     </div>
   );
@@ -314,6 +499,36 @@ function ProviderSelect({
             {p.label}
             {p.configured ? '' : '  (key missing)'}
           </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function ModelDropdown({
+  label, value, options, placeholder, onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  placeholder: string;
+  onChange: (v: string) => void;
+}) {
+  // If the currently stored value isn't in the detected list, still render
+  // it as an option so the select reflects the user's choice even when the
+  // Ollama daemon is off or the model was uninstalled.
+  const effective = value && !options.includes(value) ? [value, ...options] : options;
+  return (
+    <div>
+      <label className="text-xs text-slate-400">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm w-full focus:outline-none focus:ring-2 focus:ring-gold-500"
+      >
+        <option value="">{placeholder}</option>
+        {effective.map((m) => (
+          <option key={m} value={m}>{m}</option>
         ))}
       </select>
     </div>

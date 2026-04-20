@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.config import settings
+from app.models import PaddingStyle
 from app.services import ppt_extract_service, video_job_service, video_service
 from app.services.background_service import assign_backgrounds, build_id_to_path
 
@@ -131,6 +132,7 @@ class JobSpec:
     secondary_font_size: int | None
     line_spacing_multiplier: float | None
     show_page_numbers: bool
+    padding_style: str = "dark"
     bg_path_overrides: dict[int, Path] | None = None
     # Library / history metadata — written to ppt_library when the job
     # completes successfully. None means "don't record", preserving
@@ -227,6 +229,7 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             secondary_font_size=spec.secondary_font_size,
             line_spacing_multiplier=spec.line_spacing_multiplier,
             show_page_numbers=spec.show_page_numbers,
+            padding_style=spec.padding_style,
         )
 
         video_job_service.update_job(
@@ -399,6 +402,7 @@ async def create_video(
     secondary_font_size: int | None = Form(None),
     line_spacing_multiplier: float | None = Form(None),
     show_page_numbers: bool = Form(False),
+    padding_style: str = Form("dark"),
     input_snapshot: str = Form(""),
 ):
     cached = _load_cached_plan(analysis_id)
@@ -445,6 +449,7 @@ async def create_video(
         secondary_font_size=secondary_font_size,
         line_spacing_multiplier=line_spacing_multiplier,
         show_page_numbers=show_page_numbers,
+        padding_style=padding_style if padding_style in ("dark", "light") else "dark",
         analysis_id=analysis_id,
         library_language=cached.plan.language,
         library_snapshot=snapshot_payload,
@@ -616,6 +621,7 @@ class RerenderRequest(BaseModel):
     secondary_font_size: int | None = None
     line_spacing_multiplier: float | None = None
     show_page_numbers: bool = False
+    padding_style: PaddingStyle = "dark"
     timing_overrides: list[TimingOverride] = []
     background_overrides: list[BackgroundOverride] = []
     input_snapshot: dict | None = None
@@ -678,6 +684,7 @@ async def rerender_video(req: RerenderRequest):
         secondary_font_size=req.secondary_font_size,
         line_spacing_multiplier=req.line_spacing_multiplier,
         show_page_numbers=req.show_page_numbers,
+        padding_style=req.padding_style,
         bg_path_overrides=bg_path_overrides,
         analysis_id=req.analysis_id,
         library_language=cached.plan.language,

@@ -87,6 +87,73 @@ def _key_configured(provider_key: str) -> bool:
     return bool(mapping.get(provider_key))
 
 
+def _ollama_native_base_url() -> str:
+    """OLLAMA_BASE_URL points at the OpenAI-compatible `/v1` endpoint; strip it
+    so we can talk to Ollama's native `/api/*` routes."""
+    base = settings.OLLAMA_BASE_URL.rstrip("/")
+    return base[:-3] if base.endswith("/v1") else base
+
+
+def _fetch_ollama_capabilities(base: str, name: str) -> list[str]:
+    import json
+    import urllib.request
+
+    try:
+        payload = json.dumps({"name": name}).encode()
+        req = urllib.request.Request(
+            f"{base}/api/show", data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            show = json.loads(r.read().decode())
+        return show.get("capabilities", []) or []
+    except Exception:
+        return []
+
+
+@router.get("/ollama-models")
+async def ollama_models():
+    """List local Ollama models so the Settings page can show a dropdown.
+
+    Returns two lists — text-capable and vision-capable — since Ollama's
+    ``/api/tags`` doesn't expose capabilities. We call ``/api/show`` for
+    each model in parallel via ``asyncio.gather`` + ``to_thread`` so the
+    async event loop isn't blocked by synchronous urllib on a 10-model box.
+    """
+    import asyncio
+    import json
+    import urllib.request
+
+    base = _ollama_native_base_url()
+    try:
+        data = await asyncio.to_thread(
+            lambda: json.loads(urllib.request.urlopen(f"{base}/api/tags", timeout=5).read().decode())
+        )
+    except Exception as e:
+        return {"available": False, "error": str(e), "text": [], "vision": []}
+
+    names = [m["name"] for m in data.get("models", []) if m.get("name")]
+    caps_results = await asyncio.gather(
+        *(asyncio.to_thread(_fetch_ollama_capabilities, base, n) for n in names)
+    )
+
+    text_models: list[str] = []
+    vision_models: list[str] = []
+    for name, caps in zip(names, caps_results):
+        if "vision" in caps:
+            vision_models.append(name)
+        # Unknown capabilities = safer to assume text-only than to hide the
+        # model from the dropdown entirely.
+        if "completion" in caps or "vision" in caps or not caps:
+            text_models.append(name)
+
+    return {
+        "available": True,
+        "text": sorted(text_models),
+        "vision": sorted(vision_models),
+    }
+
+
 @router.get("/status")
 async def llm_status():
     # Reflect any per-request overrides the middleware applied from X-LLM-*

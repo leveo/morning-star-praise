@@ -62,6 +62,7 @@ export async function generatePPT(
   primaryFontSize?: number,
   secondaryFontSize?: number,
   lineSpacingMultiplier?: number,
+  paddingStyle: 'dark' | 'light' = 'dark',
 ): Promise<PPTGenerateResponse> {
   const { data } = await api.post<PPTGenerateResponse>('/ppt/generate', {
     title,
@@ -73,6 +74,7 @@ export async function generatePPT(
     primary_font_size: primaryFontSize,
     secondary_font_size: secondaryFontSize,
     line_spacing_multiplier: lineSpacingMultiplier,
+    padding_style: paddingStyle,
   });
   return data;
 }
@@ -337,6 +339,7 @@ export interface RerenderRequest {
   secondaryFontSize?: number;
   lineSpacingMultiplier?: number;
   showPageNumbers?: boolean;
+  paddingStyle?: 'dark' | 'light';
   timingOverrides?: { idx: number; start_sec: number; end_sec: number }[];
   backgroundOverrides?: { idx: number; background_id?: number }[];
   inputSnapshot?: Record<string, unknown>;
@@ -356,6 +359,7 @@ export async function rerenderWorshipVideo(
     secondary_font_size: req.secondaryFontSize,
     line_spacing_multiplier: req.lineSpacingMultiplier,
     show_page_numbers: req.showPageNumbers ?? false,
+    padding_style: req.paddingStyle ?? 'dark',
     timing_overrides: req.timingOverrides ?? [],
     background_overrides: req.backgroundOverrides ?? [],
     input_snapshot: req.inputSnapshot,
@@ -397,6 +401,7 @@ export async function createWorshipVideo(
   lineSpacingMultiplier?: number,
   showPageNumbers: boolean = false,
   inputSnapshot?: Record<string, unknown>,
+  paddingStyle: 'dark' | 'light' = 'dark',
 ): Promise<VideoJobStatus> {
   const formData = new FormData();
   formData.append('analysis_id', analysisId);
@@ -426,6 +431,7 @@ export async function createWorshipVideo(
   if (showPageNumbers) {
     formData.append('show_page_numbers', 'true');
   }
+  formData.append('padding_style', paddingStyle);
   if (inputSnapshot) {
     formData.append('input_snapshot', JSON.stringify(inputSnapshot));
   }
@@ -506,5 +512,17 @@ export interface LLMStatusResponse {
 
 export async function getLLMStatus(): Promise<LLMStatusResponse> {
   const { data } = await api.get<LLMStatusResponse>('/llm/status');
+  return data;
+}
+
+export interface OllamaModels {
+  available: boolean;
+  error?: string;
+  text: string[];
+  vision: string[];
+}
+
+export async function getOllamaModels(): Promise<OllamaModels> {
+  const { data } = await api.get<OllamaModels>('/llm/ollama-models');
   return data;
 }

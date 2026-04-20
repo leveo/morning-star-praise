@@ -921,6 +921,7 @@ def render_via_remotion(
     secondary_font_size: int | None = None,
     line_spacing_multiplier: float | None = None,
     show_page_numbers: bool = False,
+    padding_style: str = "dark",
 ) -> None:
     """Copy assets into a per-job public dir, write props.json, run Remotion."""
     project_dir = settings.REMOTION_PROJECT_DIR
@@ -984,6 +985,7 @@ def render_via_remotion(
         "secondaryFontSizePt": secondary_font_size,
         "lineSpacingMultiplier": line_spacing_multiplier,
         "showPageNumbers": bool(show_page_numbers),
+        "paddingStyle": padding_style,
     }
 
     props_path = work_dir / "props.json"
@@ -1306,6 +1308,7 @@ def build_video_from_plan(
     secondary_font_size: int | None = None,
     line_spacing_multiplier: float | None = None,
     show_page_numbers: bool = False,
+    padding_style: str = "dark",
 ) -> tuple[Path, Path]:
     """Render MP4 + SRT from a pre-computed plan. Does NOT re-transcribe."""
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1347,6 +1350,7 @@ def build_video_from_plan(
         secondary_font_size=secondary_font_size,
         line_spacing_multiplier=line_spacing_multiplier,
         show_page_numbers=show_page_numbers,
+        padding_style=padding_style,
     )
 
     write_srt(timed, srt_path)

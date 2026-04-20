@@ -70,6 +70,7 @@ def generate_ppt(request: PPTGenerateRequest):
         primary_font_size=request.primary_font_size,
         secondary_font_size=request.secondary_font_size,
         line_spacing_multiplier=request.line_spacing_multiplier,
+        padding_style=request.padding_style,
     )
 
     # Build preview data

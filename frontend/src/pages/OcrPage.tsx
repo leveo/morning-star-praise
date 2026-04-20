@@ -135,6 +135,7 @@ export default function OcrPage() {
         primaryFontSize ?? undefined,
         secondaryFontSize ?? undefined,
         lineSpacing ?? undefined,
+        template.paddingStyle,
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);

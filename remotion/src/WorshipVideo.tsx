@@ -74,13 +74,15 @@ export const worshipVideoSchema = z.object({
   secondaryFontSizePt: z.number().nullable().optional(),
   lineSpacingMultiplier: z.number().nullable().optional(),
   showPageNumbers: z.boolean().optional(),
+  // 'dark' = black semi-transparent overlay + white text (default);
+  // 'light' = white semi-transparent overlay + black text.
+  paddingStyle: z.enum(["dark", "light"]).optional(),
 });
 
 export type WorshipVideoProps = z.infer<typeof worshipVideoSchema>;
 export type KaraokeUnit = z.infer<typeof unitSchema>;
+export type PaddingStyle = "dark" | "light";
 
-const UNSUNG_COLOR = "#ffffff";
-const SUNG_COLOR = "#fde047"; // tailwind yellow-300
 const KARAOKE_RAMP_SEC = 0.15;
 
 const hasChinese = (s: string) => /[\u4e00-\u9fff]/.test(s);
@@ -108,6 +110,7 @@ type SlideProps = {
   pageNumber?: number;
   /** Total content pages for the "N / total" badge. */
   totalPages?: number;
+  paddingStyle?: PaddingStyle;
 };
 
 // PPT-reference slide is 540pt tall; our Remotion canvas is 1080px tall.
@@ -126,10 +129,46 @@ const groupUnitsByLine = (units: KaraokeUnit[]): KaraokeUnit[][] => {
   return lines;
 };
 
+type PaddingPalette = {
+  overlayBg: string;
+  primaryText: string;
+  secondaryText: string;
+  pageBadgeBg: string;
+  pageBadgeFg: string;
+  textShadow: string;
+  karaokeUnsung: string;
+  karaokeSung: string;
+};
+
+const PADDING_PALETTE: Record<PaddingStyle, PaddingPalette> = {
+  dark: {
+    overlayBg: "rgba(0,0,0,0.4)",
+    primaryText: "#ffffff",
+    secondaryText: "#d2d2d2",
+    pageBadgeBg: "rgba(0,0,0,0.55)",
+    pageBadgeFg: "#ffffff",
+    textShadow: "3px 3px 0 rgba(0,0,0,0.75)",
+    karaokeUnsung: "#ffffff",
+    karaokeSung: "#fde047",          // tailwind yellow-300
+  },
+  light: {
+    overlayBg: "rgba(255,255,255,0.55)",
+    primaryText: "#0f172a",
+    secondaryText: "#475569",
+    pageBadgeBg: "rgba(255,255,255,0.7)",
+    pageBadgeFg: "#0f172a",
+    textShadow: "1px 1px 0 rgba(255,255,255,0.85)",
+    karaokeUnsung: "#0f172a",        // slate-900
+    karaokeSung: "#b45309",          // amber-700 (stands out on white)
+  },
+};
+
 const KaraokeBlock: React.FC<{
   units: KaraokeUnit[];
   absTimeSec: number;
-}> = ({ units, absTimeSec }) => {
+  paddingStyle: PaddingStyle;
+}> = ({ units, absTimeSec, paddingStyle }) => {
+  const { karaokeUnsung: unsung, karaokeSung: sung } = PADDING_PALETTE[paddingStyle];
   const lines = groupUnitsByLine(units);
   return (
     <>
@@ -140,9 +179,8 @@ const KaraokeBlock: React.FC<{
           ) : (
             lineUnits.map((u, j) => {
               if (u.startSec == null) {
-                // Whitespace / untimed — render as-is in unsung color
                 return (
-                  <span key={j} style={{ color: UNSUNG_COLOR }}>
+                  <span key={j} style={{ color: unsung }}>
                     {u.text}
                   </span>
                 );
@@ -150,7 +188,7 @@ const KaraokeBlock: React.FC<{
               const color = interpolateColors(
                 absTimeSec,
                 [u.startSec, u.startSec + KARAOKE_RAMP_SEC],
-                [UNSUNG_COLOR, SUNG_COLOR],
+                [unsung, sung],
               );
               return (
                 <span key={j} style={{ color }}>
@@ -178,7 +216,16 @@ const Slide: React.FC<SlideProps> = ({
   lineSpacingMultiplier,
   pageNumber = 0,
   totalPages = 0,
+  paddingStyle = "dark",
 }) => {
+  const {
+    overlayBg,
+    primaryText: primaryTextColor,
+    secondaryText: secondaryTextColor,
+    pageBadgeBg,
+    pageBadgeFg,
+    textShadow,
+  } = PADDING_PALETTE[paddingStyle];
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -236,7 +283,7 @@ const Slide: React.FC<SlideProps> = ({
         <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }} />
       )}
 
-      {/* Semi-transparent black overlay — 0.5" pad at 144 DPI = 72px */}
+      {/* Semi-transparent overlay — 0.5" pad at 144 DPI = 72px */}
       <AbsoluteFill>
         <div
           style={{
@@ -245,7 +292,7 @@ const Slide: React.FC<SlideProps> = ({
             left: 72,
             right: 72,
             bottom: 72,
-            backgroundColor: "rgba(0,0,0,0.4)",
+            backgroundColor: overlayBg,
           }}
         />
       </AbsoluteFill>
@@ -262,18 +309,18 @@ const Slide: React.FC<SlideProps> = ({
       >
         <div
           style={{
-            color: "#ffffff",
+            color: primaryTextColor,
             fontFamily: fontFamilyStack,
             fontSize: primarySize,
             fontWeight: 700,
             lineHeight: primaryLineHeight,
-            textShadow: "3px 3px 0 rgba(0,0,0,0.75)",
+            textShadow,
             whiteSpace: "pre-wrap",
             wordBreak: isZh ? "normal" : "break-word",
           }}
         >
           {useKaraoke ? (
-            <KaraokeBlock units={units!} absTimeSec={absTimeSec} />
+            <KaraokeBlock units={units!} absTimeSec={absTimeSec} paddingStyle={paddingStyle} />
           ) : (
             lines.map((line, i) => (
               <div key={i}>{line === "" ? "\u00A0" : line}</div>
@@ -283,7 +330,7 @@ const Slide: React.FC<SlideProps> = ({
             <div
               style={{
                 fontSize: secondarySize,
-                color: "#d2d2d2",
+                color: secondaryTextColor,
                 marginTop: 40,
                 fontWeight: 400,
               }}
@@ -302,8 +349,8 @@ const Slide: React.FC<SlideProps> = ({
             bottom: 90,
             padding: "8px 20px",
             borderRadius: 999,
-            backgroundColor: "rgba(0,0,0,0.55)",
-            color: "#ffffff",
+            backgroundColor: pageBadgeBg,
+            color: pageBadgeFg,
             fontFamily: fontFamilyStack,
             fontSize: 32,
             fontWeight: 600,
@@ -330,6 +377,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
   secondaryFontSizePt,
   lineSpacingMultiplier,
   showPageNumbers = false,
+  paddingStyle = "dark",
 }) => {
   const { fps } = useVideoConfig();
   const fadeFrames = Math.max(1, Math.round(fps * 0.4));
@@ -351,6 +399,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
           primaryFontSizePt={primaryFontSizePt}
           secondaryFontSizePt={secondaryFontSizePt}
           lineSpacingMultiplier={lineSpacingMultiplier}
+          paddingStyle={paddingStyle}
         />
       </Sequence>
 
@@ -380,6 +429,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
               lineSpacingMultiplier={lineSpacingMultiplier}
               pageNumber={showPageNumbers ? i + 1 : 0}
               totalPages={showPageNumbers ? chunks.length : 0}
+              paddingStyle={paddingStyle}
             />
           </Sequence>
         );

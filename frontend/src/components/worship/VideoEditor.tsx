@@ -27,6 +27,7 @@ interface Props {
   secondaryFontSize?: number;
   lineSpacingMultiplier?: number;
   showPageNumbers: boolean;
+  paddingStyle: 'dark' | 'light';
   selectedBgIds: number[];
   extractedBgFilenames?: string[];
   onRerendered: (filename: string) => void;
@@ -48,6 +49,7 @@ export default function VideoEditor({
   secondaryFontSize,
   lineSpacingMultiplier,
   showPageNumbers,
+  paddingStyle,
   selectedBgIds,
   extractedBgFilenames,
   onRerendered,
@@ -154,6 +156,7 @@ export default function VideoEditor({
       secondaryFontSizePt: secondaryFontSize ?? null,
       lineSpacingMultiplier: lineSpacingMultiplier ?? null,
       showPageNumbers,
+      paddingStyle,
     };
   }, [
     plan,
@@ -167,6 +170,7 @@ export default function VideoEditor({
     secondaryFontSize,
     lineSpacingMultiplier,
     showPageNumbers,
+    paddingStyle,
   ]);
 
   const durationInFrames = useMemo(() => {
@@ -189,6 +193,7 @@ export default function VideoEditor({
         secondaryFontSize,
         lineSpacingMultiplier,
         showPageNumbers,
+        paddingStyle,
         timingOverrides: Object.entries(timingEdits).map(([idx, e]) => ({
           idx: Number(idx),
           start_sec: e.start,
