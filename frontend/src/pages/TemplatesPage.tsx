@@ -342,14 +342,39 @@ function APIProviderPicker({
   status: LLMStatusResponse | null;
   labels: LLMLabels;
 }) {
-  const apiProviders = (status?.providers ?? []).filter((p) => p.key !== 'ollama');
-  const textProviders = apiProviders.filter((p) => p.supports_text);
-  const visionProviders = apiProviders.filter((p) => p.supports_vision);
+  const allApi = (status?.providers ?? []).filter((p) => p.key !== 'ollama');
+  // Only offer providers whose API key is present in the server's .env.
+  // Exception: keep the user's currently-selected provider visible even
+  // without a key, so a stale choice doesn't silently reset to blank.
+  const enabledApi = allApi.filter((p) => p.configured);
+  const include = (list: LLMProviderInfo[], key: string) => {
+    if (!key) return list;
+    return list.some((p) => p.key === key)
+      ? list
+      : [...list, ...allApi.filter((p) => p.key === key)];
+  };
+  const textProviders = include(
+    enabledApi.filter((p) => p.supports_text),
+    draft.textProvider,
+  );
+  const visionProviders = include(
+    enabledApi.filter((p) => p.supports_vision),
+    draft.visionProvider,
+  );
 
-  const findMeta = (key: string) => apiProviders.find((p) => p.key === key);
+  const findMeta = (key: string) => allApi.find((p) => p.key === key);
   const textMeta = findMeta(draft.textProvider);
   const visionMeta = findMeta(draft.visionProvider);
   const showVisionHint = visionMeta && !visionMeta.configured && visionMeta.key !== textMeta?.key;
+
+  if (status && enabledApi.length === 0) {
+    return (
+      <div className="rounded-lg border border-amber-700/50 bg-amber-900/10 px-4 py-3 text-xs text-amber-200 space-y-1">
+        <p>{labels.noApiKeysConfigured}</p>
+        <p className="text-amber-300/80">{labels.noApiKeysHint}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

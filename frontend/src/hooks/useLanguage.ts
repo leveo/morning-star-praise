@@ -234,6 +234,8 @@ type TextDict = {
     howToConfigure: string;
     howToConfigureBody: (envVar: string, getKeyUrl: string) => string;
     restartRequired: string;
+    noApiKeysConfigured: string;
+    noApiKeysHint: string;
   };
   slideDeck: {
     preview: (n: number) => string;
@@ -604,6 +606,8 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       howToConfigureBody: (envVar, getKeyUrl) =>
         `1. 申请 key: ${getKeyUrl}\n2. 编辑 backend/.env，加一行：${envVar}=<你的key>\n3. 重启后端（./praise.sh 或直接 Ctrl+C 后 python run.py）`,
       restartRequired: '改完 .env 后需重启后端才生效。',
+      noApiKeysConfigured: '.env 里没有任何可用的 API key，无法启用 API 模式。',
+      noApiKeysHint: '在 backend/.env 里设置 OPENAI_API_KEY / ANTHROPIC_API_KEY / GOOGLE_API_KEY 等任意一个，重启后端后再回来。',
     },
     slideDeck: {
       preview: (n) => `预览（${n} 张 slide）`,
@@ -881,6 +885,8 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       howToConfigureBody: (envVar, getKeyUrl) =>
         `1. Get a key from: ${getKeyUrl}\n2. Edit backend/.env and add: ${envVar}=<your-key>\n3. Restart the backend (./praise.sh or Ctrl+C then python run.py)`,
       restartRequired: 'Backend restart needed after editing .env.',
+      noApiKeysConfigured: 'No usable API keys in .env — API mode is unavailable.',
+      noApiKeysHint: 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or another provider key in backend/.env, then restart the backend.',
     },
     slideDeck: {
       preview: (n) => `Preview (${n} slides)`,
