@@ -81,7 +81,7 @@ def _resolve_sheet_crop_paths(session_id: str, filenames: list[str]) -> list[Pat
                 continue
         except ValueError:
             continue
-        if p.exists() and p.is_file():
+        if p.is_file():
             resolved.append(p)
     return resolved
 
@@ -168,9 +168,7 @@ class JobSpec:
     show_page_numbers: bool
     padding_style: str = "dark"
     bg_path_overrides: dict[int, Path] | None = None
-    # Optional per-chunk sheet-music overlay crops (already PNG files on
-    # disk from /api/sheet/analyze). Renderer cycles through when shorter
-    # than chunk count; None/empty disables the overlay.
+    # Renderer cycles these crops when fewer than chunks. None disables.
     sheet_crop_paths: list[Path] | None = None
     # Library / history metadata — written to ppt_library when the job
     # completes successfully. None means "don't record", preserving

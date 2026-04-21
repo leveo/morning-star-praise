@@ -54,8 +54,8 @@ export const chunkSchema = z.object({
   startSec: z.number(),
   endSec: z.number(),
   backgroundSrc: z.string().nullable(),
-  // Optional sheet-music crop PNG for this chunk. CLI render: filename under
-  // public_dir. Player: absolute /api/sheet/preview/... URL.
+  // CLI render gets a filename under public_dir; Player gets an absolute URL
+  // — `resolveAssetUrl` branches on that.
   sheetImageSrc: z.string().nullable().optional(),
   units: z.array(unitSchema).optional(),
 });
@@ -302,15 +302,16 @@ const Slide: React.FC<SlideProps> = ({
         />
       </AbsoluteFill>
 
-      {/* Centered text (sheet image stacked above when provided) */}
+      {/* Stack to column only when a sheet overlay is present — otherwise keep
+          the original single-child flex so sheet-less slides don't shift. */}
       <AbsoluteFill
         style={{
           padding: 130,
           display: "flex",
-          flexDirection: "column",
+          flexDirection: !isTitle && sheetImageSrc ? "column" : "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 40,
+          gap: !isTitle && sheetImageSrc ? 40 : 0,
           textAlign: "center",
         }}
       >

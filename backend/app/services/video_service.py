@@ -938,33 +938,24 @@ def render_via_remotion(
     audio_name = f"audio{audio_path.suffix.lower() or '.mp3'}"
     shutil.copy2(audio_path, public_dir / audio_name)
 
-    bg_src_to_name: dict[str, str] = {}
+    def _make_asset_copier(prefix: str):
+        cache: dict[str, str] = {}
 
-    def _bg_name_for(bg: Path | None) -> str | None:
-        if not bg or not bg.exists():
-            return None
-        key = str(bg.resolve())
-        cached = bg_src_to_name.get(key)
-        if cached:
-            return cached
-        safe_name = f"bg_{len(bg_src_to_name):03d}{bg.suffix.lower()}"
-        shutil.copy2(bg, public_dir / safe_name)
-        bg_src_to_name[key] = safe_name
-        return safe_name
+        def name_for(p: Path | None) -> str | None:
+            if not p or not p.exists():
+                return None
+            key = str(p.resolve())
+            if key in cache:
+                return cache[key]
+            safe = f"{prefix}_{len(cache):03d}{p.suffix.lower()}"
+            shutil.copy2(p, public_dir / safe)
+            cache[key] = safe
+            return safe
 
-    sheet_src_to_name: dict[str, str] = {}
+        return name_for
 
-    def _sheet_name_for(sheet: Path | None) -> str | None:
-        if not sheet or not sheet.exists():
-            return None
-        key = str(sheet.resolve())
-        cached = sheet_src_to_name.get(key)
-        if cached:
-            return cached
-        safe_name = f"sheet_{len(sheet_src_to_name):03d}{sheet.suffix.lower()}"
-        shutil.copy2(sheet, public_dir / safe_name)
-        sheet_src_to_name[key] = safe_name
-        return safe_name
+    _bg_name_for = _make_asset_copier("bg")
+    _sheet_name_for = _make_asset_copier("sheet")
 
     title_bg_name = _bg_name_for(background_paths[0]) if background_paths else None
     content_bgs: list[Path | None] = (

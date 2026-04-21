@@ -71,13 +71,8 @@ export default function OcrPage() {
   const [generating, setGenerating] = useState(false);
   const { usage, refreshUsage } = useUsageTracker();
 
-  // Sheet music pipeline — reuse the file the user already uploaded for OCR.
-  // Upload fires during extract so the OMR pipeline runs in parallel; analyze
-  // is triggered once we know the slide count (after parsing).
-  //
-  // sheetMode: 'rebuild' = homr→Verovio clean re-render (扒谱); 'crop' = pixel
-  // crop from original scan (截图). Persisted because users have strong
-  // preferences — one mode is rarely right for every song they own.
+  // Sheet music pipeline — reuses the OCR file; upload runs in parallel with
+  // OCR, analyze fires once we know the final chunk count.
   const [sheetSession, setSheetSession] = useState<string | null>(null);
   const [sheetCrops, setSheetCrops] = useState<SheetCrop[]>([]);
   const [sheetAnalyzing, setSheetAnalyzing] = useState(false);

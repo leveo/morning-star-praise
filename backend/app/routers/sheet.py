@@ -15,6 +15,7 @@ import logging
 import shutil
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -70,7 +71,7 @@ async def upload_sheet(file: UploadFile = File(...)):
 async def analyze_sheet(
     session_id: str = Form(...),
     num_chunks: int = Form(...),
-    mode: str = Form("rebuild"),
+    mode: Literal["rebuild", "crop"] = Form("rebuild"),
 ):
     d = _session_dir(session_id)
     uploads = list(d.glob("upload.*"))
@@ -78,8 +79,6 @@ async def analyze_sheet(
         raise HTTPException(status_code=404, detail="Session not found or expired")
     if num_chunks <= 0:
         raise HTTPException(status_code=400, detail="num_chunks must be positive")
-    if mode not in ("rebuild", "crop"):
-        raise HTTPException(status_code=400, detail="mode must be 'rebuild' or 'crop'")
 
     try:
         pages, regions, system_count = sheet_music_service.analyze(
