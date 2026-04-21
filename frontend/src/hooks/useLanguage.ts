@@ -21,6 +21,19 @@ export type ResourceEntry = {
  *  labels. Keep the structure parallel across languages so the call sites
  *  can do ``UI_TEXT[uiLanguage].ocr.title`` without defensive checks. */
 type TextDict = {
+  sheet: {
+    heading: string;
+    description: string;
+    dropHere: string;
+    uploading: string;
+    analyzing: string;
+    analyzeTip: string;
+    detected: (systems: number) => string;
+    noStaffsDetected: string;
+    reupload: string;
+    clear: string;
+    chunkPreview: (idx: number) => string;
+  };
   lyrics: {
     backgrounds: string;
     songTitle: string;
@@ -189,8 +202,6 @@ type TextDict = {
     maxChars: string;
     maxSlides: string;
     noLimit: string;
-    excludeTitle: string;
-    excludeTitleHint: string;
     primaryFontSize: string;
     lineSpacing: string;
     showPageNumbers: string;
@@ -352,6 +363,19 @@ const RESOURCES_ZH: ResourceEntry[] = [
 
 export const UI_TEXT: Record<UILanguage, TextDict> = {
   zh: {
+    sheet: {
+      heading: '乐谱（可选）',
+      description: '上传乐谱图片或 PDF。系统会按 slide 数量自动切段，每张 slide 顶部显示对应的乐谱，下方是可拖动的歌词文本框（生成后用 PowerPoint 可任意调整位置）。只支持印刷乐谱；手抄谱识别可能不准。',
+      dropHere: '点击或拖入 .jpg / .png / .pdf',
+      uploading: '上传中…',
+      analyzing: '识别中（首次会下载 OMR 模型，约 2-3 分钟）…',
+      analyzeTip: '点击"重新识别"按钮可在调整歌词段数后重跑。',
+      detected: (n) => `检测到 ${n} 个五线谱系统，按 slide 分布`,
+      noStaffsDetected: '未检测到五线谱——请上传更清晰、单栏排版的乐谱',
+      reupload: '重新上传',
+      clear: '移除乐谱',
+      chunkPreview: (i) => `第 ${i + 1} 张 slide`,
+    },
     lyrics: {
       backgrounds: '背景',
       songTitle: '歌曲标题',
@@ -545,10 +569,8 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       description: '这里的偏好会被所有页面读取为默认值。每个页面仍可在本次会话中临时修改，下次打开新 tab 又回到这里。',
       maxLines: '每张最多行数',
       maxChars: '每行最多字符',
-      maxSlides: '最多 slide 数',
-      noLimit: '留空或 0 = 自动（不限制）',
-      excludeTitle: '不包括标题',
-      excludeTitleHint: '勾选时，"最多 slide 数"只数内容 slide，标题页不算。取消勾选则总数含标题。',
+      maxSlides: '最多 slide 数（不含标题页）',
+      noLimit: '自动（不限制）',
       primaryFontSize: '主字号（pt）',
       lineSpacing: '行距倍数',
       showPageNumbers: '页码',
@@ -615,6 +637,19 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
     },
   },
   en: {
+    sheet: {
+      heading: 'Sheet Music (optional)',
+      description: 'Upload a sheet music image or PDF. We detect staff systems and distribute them across your slides — each slide shows its sheet fragment up top plus a draggable lyrics textbox (you can reposition them freely in PowerPoint after generation). Printed sheets only; handwritten scores may misdetect.',
+      dropHere: 'Click or drop .jpg / .png / .pdf',
+      uploading: 'Uploading…',
+      analyzing: 'Analyzing (first run downloads the OMR model, 2-3 min)…',
+      analyzeTip: 'Click "Re-analyze" to recompute after changing lyric chunk count.',
+      detected: (n) => `Detected ${n} staff systems, distributed across slides`,
+      noStaffsDetected: 'No staff systems detected — try a cleaner single-column scan',
+      reupload: 'Re-upload',
+      clear: 'Remove sheet',
+      chunkPreview: (i) => `Slide ${i + 1}`,
+    },
     lyrics: {
       backgrounds: 'Backgrounds',
       songTitle: 'Song Title',
@@ -811,10 +846,8 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       description: 'Preferences here seed every page. Each page can still be overridden for the current session; new tabs start from these values again.',
       maxLines: 'Max lines per slide',
       maxChars: 'Max chars per row',
-      maxSlides: 'Max slides',
-      noLimit: 'Blank or 0 = auto (no cap)',
-      excludeTitle: 'Exclude title from count',
-      excludeTitleHint: 'When checked, "Max slides" counts content slides only; the title page is extra. When unchecked, the total includes the title.',
+      maxSlides: 'Max slides (title page extra)',
+      noLimit: 'Auto (no cap)',
       primaryFontSize: 'Primary font size (pt)',
       lineSpacing: 'Line spacing multiplier',
       showPageNumbers: 'Show page numbers',

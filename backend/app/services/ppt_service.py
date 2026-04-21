@@ -491,6 +491,98 @@ def _add_title_slide(slide, title: str, composer: str, language: str, slide_widt
             run2.font.name = "Arial"
 
 
+def _add_sheet_with_lyrics_slide(
+    slide,
+    text: str,
+    language: str,
+    sheet_image: Path,
+    slide_width,
+    slide_height,
+    *,
+    primary_font_size: int | None,
+    secondary_font_size: int | None,
+    line_spacing_multiplier: float | None,
+):
+    """White-background slide: sheet crop on top, draggable lyric text box below.
+
+    The text box is a standard PowerPoint textbox — the user can click into
+    it and drag it to fine-tune position, which is specifically how this mode
+    is meant to be used (image crops are only approximately aligned).
+    """
+    # White full-bleed background
+    bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, slide_width, slide_height)
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = RGBColor(255, 255, 255)
+    bg.line.fill.background()
+
+    # Sheet image occupies the top ~55% minus a small margin. Preserve aspect
+    # ratio by giving only one dimension and letting python-pptx compute the
+    # other — vertical fit is the usual bottleneck so we cap height.
+    pad = Inches(0.3)
+    sheet_top = pad
+    sheet_max_height = int(slide_height * 0.55) - int(pad)
+    sheet_width = slide_width - pad * 2
+    try:
+        pic = slide.shapes.add_picture(
+            str(sheet_image),
+            pad,
+            sheet_top,
+            width=sheet_width,
+        )
+        # If the computed height overflowed the allotted band, re-add by height.
+        if pic.height > sheet_max_height:
+            pic.width = int(pic.width * sheet_max_height / pic.height)
+            pic.height = sheet_max_height
+            pic.left = int((slide_width - pic.width) / 2)
+        # Horizontally center the sheet crop.
+        pic.left = int((slide_width - pic.width) / 2)
+    except Exception:
+        # Image load failures shouldn't block slide generation; fall through
+        # to just the lyric text so the user still gets a usable slide.
+        pass
+
+    # Lyrics — plain PPT text box starting at 60% down, so the user can drag
+    # it up/down to fine-tune. Horizontally centered.
+    is_zh = language.startswith("zh") or contains_chinese(text)
+    size = primary_font_size if primary_font_size else (
+        settings.DEFAULT_FONT_SIZE_ZH if is_zh else settings.DEFAULT_FONT_SIZE_EN
+    )
+    lyric_top = int(slide_height * 0.6)
+    lyric_height = slide_height - lyric_top - pad
+    txBox = slide.shapes.add_textbox(
+        pad, lyric_top, slide_width - pad * 2, lyric_height,
+    )
+    tf = txBox.text_frame
+    tf.word_wrap = True
+
+    a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    body_pr = tf._txBody.find(f"{{{a_ns}}}bodyPr")
+    if body_pr is None:
+        body_pr = etree.SubElement(tf._txBody, f"{{{a_ns}}}bodyPr")
+    body_pr.set("anchor", "ctr")
+
+    lines = text.split("\n")
+    zh_spacing = line_spacing_multiplier or 1.5
+    en_spacing = line_spacing_multiplier or 1.3
+    for idx, line in enumerate(lines):
+        p = tf.paragraphs[0] if idx == 0 else tf.add_paragraph()
+        p.alignment = PP_ALIGN.CENTER
+        run = p.add_run()
+        run.text = line or "\u00A0"
+        run.font.size = Pt(size)
+        run.font.bold = True
+        run.font.color.rgb = RGBColor(0, 0, 0)
+        line_is_zh = contains_chinese(line)
+        if line_is_zh:
+            run.font.name = "PingFang SC"
+            _set_east_asian_font(run, "PingFang SC")
+        else:
+            run.font.name = "Arial"
+        p.line_spacing = Pt(size * (zh_spacing if line_is_zh else en_spacing))
+
+    _ = secondary_font_size  # unused in this layout; kept for signature symmetry
+
+
 def _add_page_number(slide, page_num: int, total_pages: int, slide_width):
     """Add page number in top-right corner of a slide."""
     num_box = slide.shapes.add_textbox(
@@ -517,8 +609,15 @@ def generate_pptx(
     secondary_font_size: int | None = None,
     line_spacing_multiplier: float | None = None,
     padding_style: str = "dark",
+    sheet_image_paths: list[Path | None] | None = None,
 ) -> str:
-    """Generate a .pptx file and return the filename."""
+    """Generate a .pptx file and return the filename.
+
+    When ``sheet_image_paths[i]`` is set, slide i is rendered in the
+    sheet-music layout (white background, cropped sheet on top, draggable
+    lyric text box below) instead of the standard background + overlay.
+    A ``None`` entry falls back to the standard layout for that slide.
+    """
     prs = Presentation()
     prs.slide_width = Emu(int(settings.SLIDE_WIDTH_INCHES * 914400))
     prs.slide_height = Emu(int(settings.SLIDE_HEIGHT_INCHES * 914400))
@@ -537,23 +636,39 @@ def generate_pptx(
     # Content slides
     for i, slide_data in enumerate(slides):
         slide = prs.slides.add_slide(blank_layout)
-        bg_idx = (i + 1) % len(background_paths) if background_paths else 0
-        bg_path = background_paths[bg_idx] if background_paths else None
-
-        _add_background(slide, bg_path, slide_width, slide_height)
-
-        _add_text_with_overlay(
-            slide,
-            slide_data.text,
-            language,
-            slide_data.font_size,
-            slide_width,
-            slide_height,
-            primary_font_size=primary_font_size,
-            secondary_font_size=secondary_font_size,
-            line_spacing_multiplier=line_spacing_multiplier,
-            padding_style=padding_style,
+        sheet_for_slide = (
+            sheet_image_paths[i]
+            if sheet_image_paths is not None and i < len(sheet_image_paths)
+            else None
         )
+        if sheet_for_slide:
+            _add_sheet_with_lyrics_slide(
+                slide,
+                slide_data.text,
+                language,
+                sheet_for_slide,
+                slide_width,
+                slide_height,
+                primary_font_size=primary_font_size,
+                secondary_font_size=secondary_font_size,
+                line_spacing_multiplier=line_spacing_multiplier,
+            )
+        else:
+            bg_idx = (i + 1) % len(background_paths) if background_paths else 0
+            bg_path = background_paths[bg_idx] if background_paths else None
+            _add_background(slide, bg_path, slide_width, slide_height)
+            _add_text_with_overlay(
+                slide,
+                slide_data.text,
+                language,
+                slide_data.font_size,
+                slide_width,
+                slide_height,
+                primary_font_size=primary_font_size,
+                secondary_font_size=secondary_font_size,
+                line_spacing_multiplier=line_spacing_multiplier,
+                padding_style=padding_style,
+            )
 
         if show_page_numbers:
             _add_page_number(slide, i + 1, total_pages, slide_width)

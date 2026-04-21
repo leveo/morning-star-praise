@@ -54,6 +54,9 @@ export const chunkSchema = z.object({
   startSec: z.number(),
   endSec: z.number(),
   backgroundSrc: z.string().nullable(),
+  // Optional sheet-music crop PNG for this chunk. CLI render: filename under
+  // public_dir. Player: absolute /api/sheet/preview/... URL.
+  sheetImageSrc: z.string().nullable().optional(),
   units: z.array(unitSchema).optional(),
 });
 
@@ -98,6 +101,7 @@ const titleFontSize = (textLen: number): number => {
 type SlideProps = {
   text: string;
   backgroundSrc: string | null;
+  sheetImageSrc?: string | null;
   language: string;
   isTitle?: boolean;
   secondary?: string;
@@ -206,6 +210,7 @@ const KaraokeBlock: React.FC<{
 const Slide: React.FC<SlideProps> = ({
   text,
   backgroundSrc,
+  sheetImageSrc = null,
   language,
   isTitle = false,
   secondary = "",
@@ -297,16 +302,31 @@ const Slide: React.FC<SlideProps> = ({
         />
       </AbsoluteFill>
 
-      {/* Centered text */}
+      {/* Centered text (sheet image stacked above when provided) */}
       <AbsoluteFill
         style={{
           padding: 130,
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          gap: 40,
           textAlign: "center",
         }}
       >
+        {!isTitle && sheetImageSrc ? (
+          <Img
+            src={resolveAssetUrl(sheetImageSrc)}
+            style={{
+              maxHeight: "40%",
+              maxWidth: "90%",
+              objectFit: "contain",
+              backgroundColor: "rgba(255,255,255,0.95)",
+              borderRadius: 8,
+              padding: 12,
+            }}
+          />
+        ) : null}
         <div
           style={{
             color: primaryTextColor,
@@ -421,6 +441,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
             <Slide
               text={chunk.text}
               backgroundSrc={chunk.backgroundSrc}
+              sheetImageSrc={chunk.sheetImageSrc ?? null}
               language={language}
               units={karaokeMode ? chunk.units : undefined}
               sequenceStartSec={overlappedFrom / fps}

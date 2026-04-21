@@ -60,6 +60,23 @@ def generate_ppt(request: PPTGenerateRequest):
             background_ids=request.background_ids,
         )
 
+    # Optional sheet-music crops per slide.
+    sheet_image_paths: list[Path | None] | None = None
+    if request.sheet_session_id and request.sheet_crop_names:
+        from app.routers.sheet import SHEET_ROOT
+
+        sheet_dir = (SHEET_ROOT / request.sheet_session_id).resolve()
+        if not sheet_dir.is_relative_to(SHEET_ROOT.resolve()):
+            sheet_image_paths = None
+        else:
+            sheet_image_paths = []
+            for name in request.sheet_crop_names:
+                if not name or "/" in name or "\\" in name:
+                    sheet_image_paths.append(None)
+                    continue
+                p = sheet_dir / name
+                sheet_image_paths.append(p if p.exists() else None)
+
     filename = generate_pptx(
         title=request.title,
         slides=slides,
@@ -71,6 +88,7 @@ def generate_ppt(request: PPTGenerateRequest):
         secondary_font_size=request.secondary_font_size,
         line_spacing_multiplier=request.line_spacing_multiplier,
         padding_style=request.padding_style,
+        sheet_image_paths=sheet_image_paths,
     )
 
     # Build preview data

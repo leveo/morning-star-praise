@@ -11,6 +11,10 @@ import {
   convertChinese,
   saveSong,
   translateLyrics,
+  uploadSheet,
+  analyzeSheet,
+  deleteSheet,
+  type SheetCrop,
 } from '../api/client';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -54,12 +58,7 @@ export default function LyricsPage() {
   const template = useTemplateDefaults();
   const [maxLines, setMaxLines] = usePersistedState('lyrics.maxLines', template.maxLinesPerSlide);
   const [maxSlides, setMaxSlides] = usePersistedState('lyrics.maxSlides', template.maxSlides);
-  const [excludeTitleSlide] = usePersistedState('lyrics.excludeTitle', template.excludeTitleSlide);
   const [maxWidth, setMaxWidth] = usePersistedState('lyrics.maxWidth', template.maxWidthPerRow);
-  // When the cap includes the title slide, reserve 1 of the budget for it.
-  // Clamp the remainder to 0 (not 1) so ``maxSlides=1`` + includes-title means
-  // "title only, no content" rather than silently giving 2 total.
-  const effectiveMaxSlides = maxSlides > 0 && !excludeTitleSlide ? Math.max(0, maxSlides - 1) : maxSlides;
   const [primaryFontSize, setPrimaryFontSize] = usePersistedState<number | null>(
     'lyrics.primaryFontSize',
     template.primaryFontSize,
@@ -85,6 +84,76 @@ export default function LyricsPage() {
   const [error, setError] = useState('');
   const { sessionId, usage, refreshUsage } = useUsageTracker();
 
+  // Sheet music state — optional; not persisted since uploads live in a
+  // server-side session dir that expires with the 1h cleanup.
+  const [sheetSession, setSheetSession] = useState<string | null>(null);
+  const [sheetFilename, setSheetFilename] = useState<string>('');
+  const [sheetCrops, setSheetCrops] = useState<SheetCrop[]>([]);
+  const [sheetUploading, setSheetUploading] = useState(false);
+  const [sheetAnalyzing, setSheetAnalyzing] = useState(false);
+  const [sheetError, setSheetError] = useState('');
+  const ts = UI_TEXT[uiLanguage].sheet;
+
+  const handleSheetUpload = async (file: File) => {
+    setSheetError('');
+    setSheetUploading(true);
+    try {
+      if (sheetSession) {
+        await deleteSheet(sheetSession).catch(() => {});
+      }
+      const uploaded = await uploadSheet(file);
+      setSheetSession(uploaded.session_id);
+      setSheetFilename(uploaded.filename);
+      setSheetCrops([]);
+      const chunkCount = slides.length > 0 ? slides.length : 1;
+      setSheetAnalyzing(true);
+      try {
+        const result = await analyzeSheet(uploaded.session_id, chunkCount);
+        setSheetCrops(result.crops);
+        // If a PPT was already generated, re-run generation so the new PPT
+        // includes the sheet crops — otherwise users stare at an outdated
+        // preview and have to hunt for "Re-parse" themselves.
+        if (result.crops.length > 0 && preview.length > 0 && title.trim()) {
+          setTimeout(() => void handleRegenerate(), 0);
+        }
+      } finally {
+        setSheetAnalyzing(false);
+      }
+    } catch (err) {
+      const msg = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail || 'Sheet upload failed';
+      setSheetError(msg);
+    } finally {
+      setSheetUploading(false);
+    }
+  };
+
+  const reanalyzeSheet = async () => {
+    if (!sheetSession || slides.length === 0) return;
+    setSheetAnalyzing(true);
+    setSheetError('');
+    try {
+      const result = await analyzeSheet(sheetSession, slides.length);
+      setSheetCrops(result.crops);
+    } catch (err) {
+      const msg = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail || 'Sheet analyze failed';
+      setSheetError(msg);
+    } finally {
+      setSheetAnalyzing(false);
+    }
+  };
+
+  const clearSheet = async () => {
+    if (sheetSession) {
+      await deleteSheet(sheetSession).catch(() => {});
+    }
+    setSheetSession(null);
+    setSheetFilename('');
+    setSheetCrops([]);
+    setSheetError('');
+  };
+
   const handleParse = async () => {
     if (!lyrics.trim()) return;
     setError('');
@@ -102,8 +171,8 @@ export default function LyricsPage() {
 
       const result =
         addTranslation && translatedLyrics.trim()
-          ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, effectiveMaxSlides, maxWidth)
-          : await parseLyrics(primaryText, language, maxLines, effectiveMaxSlides, maxWidth);
+          ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, maxSlides, maxWidth)
+          : await parseLyrics(primaryText, language, maxLines, maxSlides, maxWidth);
       setSlides(result.slides);
     } catch (err) {
       setError(tl.errorParse);
@@ -134,6 +203,12 @@ export default function LyricsPage() {
         secondaryFontSize ?? undefined,
         lineSpacing ?? undefined,
         template.paddingStyle,
+        sheetSession && sheetCrops.length > 0
+          ? {
+              sessionId: sheetSession,
+              cropNames: sheetCrops.map((c) => c.filename),
+            }
+          : undefined,
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);
@@ -157,8 +232,8 @@ export default function LyricsPage() {
 
       const parsed =
         addTranslation && translatedLyrics.trim()
-          ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, effectiveMaxSlides, maxWidth)
-          : await parseLyrics(primaryText, language, maxLines, effectiveMaxSlides, maxWidth);
+          ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, maxSlides, maxWidth)
+          : await parseLyrics(primaryText, language, maxLines, maxSlides, maxWidth);
       const finalSlides = parsed.slides;
 
       setSlides(finalSlides);
@@ -169,6 +244,12 @@ export default function LyricsPage() {
         secondaryFontSize ?? undefined,
         lineSpacing ?? undefined,
         template.paddingStyle,
+        sheetSession && sheetCrops.length > 0
+          ? {
+              sessionId: sheetSession,
+              cropNames: sheetCrops.map((c) => c.filename),
+            }
+          : undefined,
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);
@@ -207,7 +288,7 @@ export default function LyricsPage() {
       const converted = await convertChinese(lyrics, target);
       setLyrics(converted);
       if (slides.length > 0) {
-        const parsed = await parseLyrics(converted, newLang, maxLines, effectiveMaxSlides);
+        const parsed = await parseLyrics(converted, newLang, maxLines, maxSlides);
         setSlides(parsed.slides);
       }
     } catch {
@@ -466,6 +547,85 @@ export default function LyricsPage() {
             selectedIds={selectedBgIds}
             onSelect={setSelectedBgIds}
           />
+        </div>
+      )}
+
+      {/* Sheet Music (optional) — visible as soon as slides are parsed AND
+          remains visible after preview so users who forgot to upload before
+          hitting Generate can still add a sheet and re-generate. */}
+      {slides.length > 0 && (
+        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-3">
+          <div>
+            <h3 className="text-sm font-medium text-slate-300">{ts.heading}</h3>
+            <p className="text-xs text-slate-500 mt-1 leading-relaxed">{ts.description}</p>
+          </div>
+
+          {!sheetSession ? (
+            <label className="block cursor-pointer border-2 border-dashed border-slate-600 hover:border-gold-500 rounded-lg p-6 text-center text-sm text-slate-400 transition-colors">
+              {sheetUploading ? ts.uploading : ts.dropHere}
+              <input
+                type="file"
+                accept=".jpg,.jpeg,.png,.webp,.pdf,image/*,application/pdf"
+                className="hidden"
+                disabled={sheetUploading}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleSheetUpload(f);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-300 truncate">📄 {sheetFilename}</span>
+                <div className="flex gap-3 shrink-0">
+                  <button
+                    type="button"
+                    onClick={reanalyzeSheet}
+                    disabled={sheetAnalyzing}
+                    className="text-gold-400 hover:text-gold-300 disabled:opacity-50"
+                  >
+                    {sheetAnalyzing ? ts.analyzing : ts.reupload}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearSheet}
+                    className="text-slate-400 hover:text-slate-200"
+                  >
+                    {ts.clear}
+                  </button>
+                </div>
+              </div>
+              {sheetAnalyzing && !sheetCrops.length && (
+                <p className="text-xs text-slate-500 italic">{ts.analyzing}</p>
+              )}
+              {!sheetAnalyzing && sheetCrops.length === 0 && (
+                <p className="text-xs text-amber-400">{ts.noStaffsDetected}</p>
+              )}
+              {sheetCrops.length > 0 && (
+                <>
+                  <p className="text-xs text-slate-400">{ts.detected(sheetCrops.length)}</p>
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                    {sheetCrops.map((c) => (
+                      <div key={c.chunk_idx} className="bg-white rounded border border-slate-700 overflow-hidden">
+                        <img src={c.url} alt="" className="w-full" />
+                        <p className="text-[10px] text-slate-600 text-center py-1">
+                          {ts.chunkPreview(c.chunk_idx)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {sheetError && (
+            <p className="text-xs text-red-300 bg-red-900/30 border border-red-700 rounded px-3 py-2">
+              {sheetError}
+            </p>
+          )}
         </div>
       )}
 

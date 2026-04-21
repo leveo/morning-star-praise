@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Player } from '@remotion/player';
 import { WorshipVideo, type WorshipVideoProps } from '@remotion-composition/WorshipVideo';
 import {
@@ -63,6 +63,15 @@ export default function VideoEditor({
   const [timingEdits, setTimingEdits] = useState<Record<number, TimingEdit>>({});
   const [bgOverrides, setBgOverrides] = useState<Record<number, number>>({});
   const [bgPickerOpen, setBgPickerOpen] = useState<number | null>(null);
+  const bgPickerRef = useRef<HTMLDivElement | null>(null);
+  // The BG picker panel renders BELOW the scrollable slide list. Click "Change
+  // BG" on a slide near the top and the panel spawns out of view, so the
+  // interaction reads as "nothing happened". Scroll it into view on open.
+  useEffect(() => {
+    if (bgPickerOpen !== null && bgPickerRef.current) {
+      bgPickerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [bgPickerOpen]);
 
   // Re-render progress state
   const [submitting, setSubmitting] = useState(false);
@@ -319,7 +328,7 @@ export default function VideoEditor({
       </div>
 
       {bgPickerOpen !== null && (
-        <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3 space-y-2">
+        <div ref={bgPickerRef} className="rounded-lg border border-slate-700 bg-slate-900/60 p-3 space-y-2">
           <div className="flex items-center justify-between text-xs text-slate-300">
             <span>Pick a background for slide #{bgPickerOpen + 1}</span>
             <button

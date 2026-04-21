@@ -97,22 +97,92 @@ def _merge_wrapped_lines(text: str) -> str:
     return "\n".join(merged)
 
 
-OCR_PROMPT = """Extract only the song lyrics from this sheet music image.
+OCR_PROMPT = """Extract the song lyrics from this sheet music image as strict JSON.
+
+Hymnals and choral scores typically print multiple VERSES under the same set
+of staves — e.g. rows labelled 1/2/3/4 stack under each staff system, one
+row per verse. Your job is to untangle that back into verses where each
+verse holds the lines it would sing across the staff systems in order.
+
+Output format — output ONLY this JSON object, no markdown fences, no prose:
+
+{
+  "language": "zh-hans" | "zh-hant" | "en",
+  "verses": [
+    {"number": 1, "lines": ["line for verse 1 under system 1", "line for verse 1 under system 2", ...]},
+    {"number": 2, "lines": ["line for verse 2 under system 1", "line for verse 2 under system 2", ...]}
+  ]
+}
 
 Rules:
-- Return ONLY the lyrics text, line by line
-- Preserve verse/chorus/bridge structure (separate sections with a blank line)
-- IGNORE all musical notation: notes, rests, time signatures, key signatures, chord symbols (Am, G, C, etc.), measure numbers, dynamics markings
-- If the text is in Chinese, preserve the exact original characters (do not add pinyin)
-- If there are verse numbers (1, 2, 3...), include them as labels like "Verse 1:", "Verse 2:"
-- Do NOT include the song title unless it's clearly separate from the lyrics
-- Output clean text only, no markdown formatting"""
+- One "line" = one staff system's worth of lyrics for that verse.
+- IGNORE musical notation, chord symbols (Am/G/C/D7 etc.), clefs, time/key signatures, measure numbers, dynamics.
+- If no verse numbering is visible, put all lyrics into a single verse (number 1).
+- Preserve original CJK characters exactly; do NOT add pinyin or romanization.
+- Exclude the song title, composer credits, copyright lines, and psalm citations.
+- "language" is your best guess at the dominant lyric language (use "zh-hans" for simplified, "zh-hant" for traditional, "en" for English-only)."""
+
+
+def _parse_structured_lyrics(raw: str) -> dict | None:
+    """Try to coerce the LLM's JSON response into our verses schema. Returns
+    None on any parse failure so callers can fall back to flat-text mode.
+
+    LLMs sometimes wrap the JSON in ```json fences or add leading prose; we
+    strip both before parsing.
+    """
+    import json
+    import re
+
+    stripped = raw.strip()
+    # Peel common wrappers: ```json ... ```, ``` ... ```, leading "JSON:" etc.
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, re.DOTALL)
+    if fence:
+        stripped = fence.group(1).strip()
+    # First well-formed { ... } span, in case the model added prose prefix.
+    brace = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if brace:
+        stripped = brace.group(0)
+    try:
+        data = json.loads(stripped)
+    except Exception:
+        return None
+    verses = data.get("verses") if isinstance(data, dict) else None
+    if not isinstance(verses, list) or not verses:
+        return None
+    clean: list[dict] = []
+    for i, v in enumerate(verses):
+        if not isinstance(v, dict):
+            continue
+        lines = v.get("lines")
+        if not isinstance(lines, list):
+            continue
+        lines_clean = [str(ln).strip() for ln in lines if str(ln).strip()]
+        if not lines_clean:
+            continue
+        clean.append({"number": int(v.get("number") or (i + 1)), "lines": lines_clean})
+    if not clean:
+        return None
+    lang = data.get("language") if isinstance(data.get("language"), str) else None
+    return {"verses": clean, "language": lang}
+
+
+def _flatten_verses_to_lyrics(verses: list[dict]) -> str:
+    """Backward-compat: render the verses list as plain labelled text the
+    existing parse_lyrics path can digest (for clients that ignore the
+    ``structured`` field)."""
+    sections: list[str] = []
+    for v in verses:
+        header = f"Verse {v['number']}:"
+        body = "\n".join(v["lines"])
+        sections.append(f"{header}\n{body}")
+    return "\n\n".join(sections)
 
 
 def extract_lyrics_from_image(image_path: Path, session_id: str = "") -> dict:
     """Extract lyrics from a sheet music image via the configured vision LLM.
 
-    Returns: {lyrics: str, language: str}
+    Returns {lyrics, language, structured?} — ``structured`` is a
+    ``{verses: [{number, lines}]}`` dict when the LLM returned parseable JSON.
     """
     from app.services import llm_service
 
@@ -122,6 +192,21 @@ def extract_lyrics_from_image(image_path: Path, session_id: str = "") -> dict:
         image_bytes, mime_type, OCR_PROMPT,
         session_id=session_id, action="ocr",
     )
+
+    structured = _parse_structured_lyrics(text)
+    if structured:
+        lyrics = _flatten_verses_to_lyrics(structured["verses"])
+        language = structured["language"] or (
+            "zh-hans" if contains_chinese(lyrics) else "en"
+        )
+        return {
+            "lyrics": lyrics,
+            "language": language,
+            "structured": {"verses": structured["verses"]},
+        }
+
+    # LLM didn't produce parseable JSON — likely a less-capable model.
+    # Fall back to the original behaviour so the feature still works.
     lyrics = _merge_wrapped_lines(text)
     language = "zh-hans" if contains_chinese(lyrics) else "en"
     return {"lyrics": lyrics, "language": language}
@@ -132,19 +217,30 @@ def extract_lyrics_from_file(file_path: Path, session_id: str = "") -> dict:
         page_images = _pdf_to_images(file_path)
         all_lyrics = []
         language = "en"
+        merged_verses: list[dict] = []
 
         for page_path in page_images:
             result = extract_lyrics_from_image(page_path, session_id=session_id)
             all_lyrics.append(result["lyrics"])
             if result["language"].startswith("zh"):
                 language = result["language"]
+            # Concat verse lists across pages. Renumber so verse-1 on page 2
+            # becomes the next available number instead of colliding with
+            # page-1's verse 1.
+            page_struct = (result.get("structured") or {}).get("verses") or []
+            offset = merged_verses[-1]["number"] if merged_verses else 0
+            for i, v in enumerate(page_struct, start=1):
+                merged_verses.append({"number": offset + i, "lines": list(v["lines"])})
             page_path.unlink(missing_ok=True)
 
-        return {
+        payload = {
             "lyrics": "\n\n".join(all_lyrics),
             "language": language,
             "pages": len(page_images),
         }
+        if merged_verses:
+            payload["structured"] = {"verses": merged_verses}
+        return payload
     else:
         result = extract_lyrics_from_image(file_path, session_id=session_id)
         result["pages"] = 1

@@ -35,6 +35,11 @@ const FOOTER_PRIVACY: Record<UILanguage, string> = {
   en: 'Privacy Policy',
 };
 
+const FOOTER_ABOUT: Record<UILanguage, string> = {
+  zh: '关于我们',
+  en: 'About',
+};
+
 export default function Layout() {
   const location = useLocation();
   const [uiLanguage, setUILanguage] = useUILanguage();
@@ -82,6 +87,9 @@ export default function Layout() {
         <div className="mx-auto max-w-6xl px-4 py-6 flex items-center justify-between text-xs text-slate-500 gap-4 flex-wrap">
           <p>{FOOTER_NOTICE[uiLanguage]}</p>
           <div className="flex items-center gap-4">
+            <Link to="/about" className="hover:text-slate-300 transition-colors">
+              {FOOTER_ABOUT[uiLanguage]}
+            </Link>
             <Link to="/terms" className="hover:text-slate-300 transition-colors">
               {FOOTER_TERMS[uiLanguage]}
             </Link>

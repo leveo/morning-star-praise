@@ -52,6 +52,40 @@ class ExtractLyricsResponse(BaseModel):
     composer: str = ""
 
 
+def _resolve_sheet_crop_paths(session_id: str, filenames: list[str]) -> list[Path]:
+    """Map `<session>/<crop_name>` to absolute paths under uploads/sheet/.
+
+    Rejects path-traversal, unknown sessions, and files that don't exist.
+    The return order matches ``filenames`` so the renderer can assume
+    ``resolved[i]`` corresponds to slide ``i`` (cycled by the renderer).
+    """
+    if not session_id or not filenames:
+        return []
+    if not session_id.isalnum():
+        return []
+    base = (settings.UPLOADS_DIR / "sheet").resolve()
+    session_dir = (base / session_id).resolve()
+    try:
+        if not session_dir.is_relative_to(base):
+            return []
+    except ValueError:
+        return []
+    resolved: list[Path] = []
+    for name in filenames:
+        name = name.strip()
+        if not name or "/" in name or "\\" in name or name.startswith("."):
+            continue
+        p = (session_dir / name).resolve()
+        try:
+            if not p.is_relative_to(session_dir):
+                continue
+        except ValueError:
+            continue
+        if p.exists() and p.is_file():
+            resolved.append(p)
+    return resolved
+
+
 def _resolve_extracted_bg_paths(rel_paths: list[str]) -> list[Path]:
     """Map `<session>/<file>` strings to local Path objects under EXTRACTED_BG_DIR.
 
@@ -134,6 +168,10 @@ class JobSpec:
     show_page_numbers: bool
     padding_style: str = "dark"
     bg_path_overrides: dict[int, Path] | None = None
+    # Optional per-chunk sheet-music overlay crops (already PNG files on
+    # disk from /api/sheet/analyze). Renderer cycles through when shorter
+    # than chunk count; None/empty disables the overlay.
+    sheet_crop_paths: list[Path] | None = None
     # Library / history metadata — written to ppt_library when the job
     # completes successfully. None means "don't record", preserving
     # backward-compat for older clients that don't send a snapshot.
@@ -230,6 +268,7 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             line_spacing_multiplier=spec.line_spacing_multiplier,
             show_page_numbers=spec.show_page_numbers,
             padding_style=spec.padding_style,
+            sheet_crop_paths=spec.sheet_crop_paths,
         )
 
         video_job_service.update_job(
@@ -404,6 +443,8 @@ async def create_video(
     show_page_numbers: bool = Form(False),
     padding_style: str = Form("dark"),
     input_snapshot: str = Form(""),
+    sheet_session_id: str = Form(""),
+    sheet_crop_filenames: str = Form(""),
 ):
     cached = _load_cached_plan(analysis_id)
 
@@ -422,6 +463,13 @@ async def create_video(
         resolved = _resolve_extracted_bg_paths(rel_list)
         if resolved:
             extracted_bg_paths = resolved
+
+    sheet_crop_paths: list[Path] | None = None
+    if sheet_session_id and sheet_crop_filenames:
+        filenames = [s for s in sheet_crop_filenames.split(",") if s.strip()]
+        resolved_sheet = _resolve_sheet_crop_paths(sheet_session_id, filenames)
+        if resolved_sheet:
+            sheet_crop_paths = resolved_sheet
 
     audio_stem = Path(cached.audio_filename).stem or "worship_video"
 
@@ -450,6 +498,7 @@ async def create_video(
         line_spacing_multiplier=line_spacing_multiplier,
         show_page_numbers=show_page_numbers,
         padding_style=padding_style if padding_style in ("dark", "light") else "dark",
+        sheet_crop_paths=sheet_crop_paths,
         analysis_id=analysis_id,
         library_language=cached.plan.language,
         library_snapshot=snapshot_payload,
@@ -624,6 +673,8 @@ class RerenderRequest(BaseModel):
     padding_style: PaddingStyle = "dark"
     timing_overrides: list[TimingOverride] = []
     background_overrides: list[BackgroundOverride] = []
+    sheet_session_id: str | None = None
+    sheet_crop_filenames: list[str] | None = None
     input_snapshot: dict | None = None
 
 
@@ -655,6 +706,14 @@ async def rerender_video(req: RerenderRequest):
         if resolved:
             extracted_bg_paths = resolved
 
+    sheet_crop_paths: list[Path] | None = None
+    if req.sheet_session_id and req.sheet_crop_filenames:
+        resolved_sheet = _resolve_sheet_crop_paths(
+            req.sheet_session_id, req.sheet_crop_filenames
+        )
+        if resolved_sheet:
+            sheet_crop_paths = resolved_sheet
+
     # Editor's ``idx`` is the lyric chunk index (0..N-1). ``bg_paths`` index 0
     # is the title slide, so chunk-level overrides shift by +1.
     bg_path_overrides: dict[int, Path] | None = None
@@ -685,6 +744,7 @@ async def rerender_video(req: RerenderRequest):
         line_spacing_multiplier=req.line_spacing_multiplier,
         show_page_numbers=req.show_page_numbers,
         padding_style=req.padding_style,
+        sheet_crop_paths=sheet_crop_paths,
         bg_path_overrides=bg_path_overrides,
         analysis_id=req.analysis_id,
         library_language=cached.plan.language,

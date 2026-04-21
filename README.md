@@ -9,6 +9,7 @@ Automated workflow that turns lyrics, sheet music, and web resources into multil
 ## Features
 
 - **Lyric → PPT** — Paste text, a YouTube URL, a `.pptx`, a PDF, or an image; get a finished `.pptx` with your background pool, fonts, and optional bilingual translation.
+- **Sheet-music → PPT** (Phase 1) — Optionally upload a printed sheet-music image or PDF on the Lyrics page; `oemer` detects staff systems, the app crops the original scan into per-slide fragments, and each slide shows the sheet fragment on top with a draggable lyrics textbox below (white backdrop). No re-rendering — the pixels are always your upload. Handwritten sheets may misdetect.
 - **Worship video** — Upload MP3 + lyrics; render an MP4 whose slide transitions lock to the moment each line is sung. Repeated verses/choruses expand automatically when the audio order differs from the written lyrics.
 - **Karaoke mode** — Per-character (CJK) or per-word (Latin) highlight that lights up with the vocal.
 - **Edit video** — After a render, open the MP4 in an embedded `@remotion/player`, nudge slide timings / swap backgrounds, and re-render from the cached plan without re-transcribing.
@@ -124,6 +125,13 @@ The selection is persisted in the browser's `localStorage` and travels to the ba
 - **PostgreSQL 14+** (required for Songs Library; skip if you don't need history)
 - **ffmpeg** (required by `yt-dlp` and audio decode) — `brew install ffmpeg` / `apt-get install ffmpeg`
 - **~4 GB disk** for the first `/api/videos/analyze` run — `faster-whisper large-v3` downloads once into the HuggingFace cache.
+- **poppler** (only if you want to upload PDF sheet music) — `brew install poppler` / `apt-get install poppler-utils`. Used by `pdf2image` to rasterize PDFs before OMR.
+- **homr + Python 3.11 + Poetry** for the sheet-music-on-PPT feature — see Setup § 3.5. First homr run downloads ~300 MB of transformer models into its venv.
+- **~200 MB** extra for `oemer` (fallback OMR) — downloads 4 ONNX/H5 weight files into `site-packages/oemer/checkpoints/` on first use. Prefetch to avoid a request-time stall:
+  ```bash
+  cd backend && source .venv/bin/activate
+  python -c "from app.services.sheet_music_service import _ensure_oemer_weights; _ensure_oemer_weights()"
+  ```
 
 ### 2. PostgreSQL
 
@@ -154,8 +162,44 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # fill in DATABASE_URL + optional LLM keys
+
+# Prefetch OMR weights (optional but strongly recommended — otherwise the
+# FIRST sheet-music analysis stalls the request for minutes while downloading
+# 4 files totalling ~200 MB).
+python -c "from app.services.sheet_music_service import _ensure_oemer_weights; _ensure_oemer_weights()"
+
 python run.py          # → http://127.0.0.1:8000
 ```
+
+### 3.5. homr — default OMR backend for sheet-music feature
+
+The sheet-music-on-PPT feature needs homr for clean grand-staff recognition on printed hymnals. Because homr pins Python 3.11 + Poetry, it runs in its own venv that the backend shells out to.
+
+```bash
+# Python 3.11 (pyenv is the easiest route)
+pyenv install 3.11
+# Poetry (user-level install keeps it out of the backend venv)
+pip install --user poetry
+
+# Vendor + install homr
+mkdir -p third_party && cd third_party
+git clone --depth=1 https://github.com/liebharc/homr.git
+cd homr
+echo "3.11.14" > .python-version   # match whatever 3.11.x you got
+~/.local/bin/poetry env use "$(pyenv prefix 3.11)/bin/python3.11"
+~/.local/bin/poetry install --only main
+```
+
+That's all — the backend auto-discovers `third_party/homr/` and `~/.local/bin/poetry` and shells out per sheet. If either is missing, the sheet pipeline falls back to `oemer` (pip-only, less accurate on grand staves).
+
+The UI exposes two modes:
+
+- **扒谱 (`rebuild`, default)** — **homr → MusicXML → Verovio render → clean PNG crop**. The PPT / video shows re-rendered notation with no scan artefacts or printed lyrics baked in. OMR mistakes (e.g. missed fermatas) become visible in the output.
+- **截图 (`crop`)** — **oemer staff detection → pixel crop from the original scan**. Preserves the source exactly, including watermarks, chord symbols and printed lyrics. Right when pixel fidelity matters more than clean typography.
+
+Both modes are available on the **乐谱** page and inside the **视频** (Worship Video) preview — the user picks per song via a segmented control, and the choice persists across reloads. When `rebuild` fails (homr not installed, Verovio crash, atypical engraving) the pipeline transparently falls back to `crop` so the request still succeeds.
+
+A future Phase 2 enhancement will use homr's MusicXML for note-level audio-to-score alignment inside videos.
 
 ### 4. Frontend
 
@@ -264,6 +308,18 @@ ollama pull qwen3-vl:4b
 Browse other vision model options at [ollama.com/search?c=vision](https://ollama.com/search?c=vision). The app speaks OpenAI-compatible chat completions to any Ollama vision model, so it's a no-code swap.
 
 ---
+
+## Sheet-music pipeline
+
+1. User uploads a sheet-music image or PDF on the Lyrics / OCR page (`POST /api/sheet/upload`). PDFs are rasterized via `pdf2image`.
+2. **homr** (in its Python 3.11 Poetry venv, called via subprocess) reads the scan and emits MusicXML. Fallback to `oemer` if homr isn't installed.
+3. **Verovio** loads the MusicXML and renders a clean SVG; `cairosvg` converts it to a PNG per Verovio page. The clean render has no scan artefacts and no printed lyrics.
+4. Classical-CV blank-band segmentation walks row-by-row across the clean PNG and splits on blank runs ≥18 rows, yielding one bounding box per visual staff system. Grand staves stay intact because Verovio's brace keeps treble+bass visually connected.
+5. Systems are distributed across the user's N lyric chunks — greedy partition when systems ≥ chunks, cyclic repeat when systems < chunks (hymnals: 3 systems cycling across 12 verses).
+6. `POST /api/sheet/analyze` writes `crop_XX.png` per chunk and returns preview URLs.
+7. PPT generation (`/api/ppt/generate` with `sheet_session_id` + `sheet_crop_names`) switches those slides to a "sheet on top, draggable lyrics textbox below, white backdrop" layout. The user fine-tunes textbox position in PowerPoint after download.
+
+**Why re-render instead of crop the original scan?** The user doesn't want the printed lyrics bleeding into the crop, and doesn't want scan watermarks / chord symbols on the slide. Verovio renders the notation cleanly with no lyrics attached. The tradeoff: OMR misreads (e.g. homr sometimes mis-detects fermatas as ties) become visible in the output. Phase 1.x accepts that tradeoff; a Phase 2 improvement would be to reconcile against the original pixels for accuracy.
 
 ## How the alignment pipeline works
 

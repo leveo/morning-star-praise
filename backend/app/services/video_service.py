@@ -922,6 +922,7 @@ def render_via_remotion(
     line_spacing_multiplier: float | None = None,
     show_page_numbers: bool = False,
     padding_style: str = "dark",
+    sheet_crop_paths: list[Path] | None = None,
 ) -> None:
     """Copy assets into a per-job public dir, write props.json, run Remotion."""
     project_dir = settings.REMOTION_PROJECT_DIR
@@ -951,12 +952,28 @@ def render_via_remotion(
         bg_src_to_name[key] = safe_name
         return safe_name
 
+    sheet_src_to_name: dict[str, str] = {}
+
+    def _sheet_name_for(sheet: Path | None) -> str | None:
+        if not sheet or not sheet.exists():
+            return None
+        key = str(sheet.resolve())
+        cached = sheet_src_to_name.get(key)
+        if cached:
+            return cached
+        safe_name = f"sheet_{len(sheet_src_to_name):03d}{sheet.suffix.lower()}"
+        shutil.copy2(sheet, public_dir / safe_name)
+        sheet_src_to_name[key] = safe_name
+        return safe_name
+
     title_bg_name = _bg_name_for(background_paths[0]) if background_paths else None
     content_bgs: list[Path | None] = (
         background_paths[1:] if len(background_paths) > 1 else list(background_paths)
     )
     if not content_bgs:
         content_bgs = [None]
+
+    sheets: list[Path] = list(sheet_crop_paths) if sheet_crop_paths else []
 
     chunks_payload = []
     for i, tc in enumerate(timed):
@@ -967,6 +984,10 @@ def render_via_remotion(
             "endSec": round(float(tc.end), 3),
             "backgroundSrc": _bg_name_for(bg),
         }
+        if sheets:
+            # Cycle the available crops so a score with N systems covers
+            # M>N slides (typical when verses repeat).
+            chunk_dict["sheetImageSrc"] = _sheet_name_for(sheets[i % len(sheets)])
         if karaoke_units and i < len(karaoke_units):
             chunk_dict["units"] = karaoke_units[i]
         chunks_payload.append(chunk_dict)
@@ -1309,6 +1330,7 @@ def build_video_from_plan(
     line_spacing_multiplier: float | None = None,
     show_page_numbers: bool = False,
     padding_style: str = "dark",
+    sheet_crop_paths: list[Path] | None = None,
 ) -> tuple[Path, Path]:
     """Render MP4 + SRT from a pre-computed plan. Does NOT re-transcribe."""
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1351,6 +1373,7 @@ def build_video_from_plan(
         line_spacing_multiplier=line_spacing_multiplier,
         show_page_numbers=show_page_numbers,
         padding_style=padding_style,
+        sheet_crop_paths=sheet_crop_paths,
     )
 
     write_srt(timed, srt_path)

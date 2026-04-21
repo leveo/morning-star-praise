@@ -14,3 +14,11 @@ anthropic>=0.42.0
 psycopg[binary]==3.2.9
 aiofiles==24.1.0
 faster-whisper==1.2.1
+# Sheet-music OMR for the "sheet on PPT" feature (POST /api/sheet/*).
+# oemer detects staff-system pixel bounding boxes; model weights (~200 MB,
+# 4 ONNX + H5 files) download into site-packages/oemer/checkpoints/ on the
+# first /api/sheet/analyze call — trigger manually ahead of time with:
+#     python -c "from app.services.sheet_music_service import _ensure_oemer_weights; _ensure_oemer_weights()"
+# pdf2image needs the ``poppler`` system package (see README Setup).
+oemer==0.1.5
+pdf2image==1.17.0

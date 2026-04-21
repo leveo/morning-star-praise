@@ -38,6 +38,15 @@ class PPTGenerateRequest(BaseModel):
     # 'dark' = black semi-transparent overlay + white text (default);
     # 'light' = white semi-transparent overlay + black text.
     padding_style: PaddingStyle = "dark"
+    # When set, generate the "sheet music + lyrics" layout: each slide
+    # carries the pre-cropped PNG produced by /api/sheet/analyze (top 55%)
+    # plus a draggable text box with the lyrics (bottom 45%) on white.
+    # ``sheet_session_id`` identifies the upload folder.
+    # ``sheet_crop_names[i]`` is the crop filename for slide i (same order
+    # as ``slides``); a shorter list means later slides fall back to the
+    # plain background+overlay layout.
+    sheet_session_id: str | None = None
+    sheet_crop_names: list[str] | None = None
     # Library / history metadata. Optional — when provided, the successful
     # generation is recorded in ppt_library so the Songs Library page can
     # restore this session later. ``source_page`` identifies which frontend

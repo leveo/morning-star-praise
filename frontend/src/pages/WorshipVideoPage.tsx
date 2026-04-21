@@ -8,17 +8,22 @@ import { usePersistedState } from '../hooks/usePersistedState';
 import { useResumeSnapshot } from '../hooks/useResumeSnapshot';
 import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import {
+  analyzeSheet,
   analyzeWorshipAudio,
   createWorshipVideo,
+  deleteSheet,
   extractLyricsFromFile,
   extractYouTubeLyrics,
   getBackgrounds,
   getVideoJob,
   getVideoDownloadUrl,
   mergeVideoJobStatus,
+  uploadSheet,
   type AnalyzedSlide,
   type AnalyzedStanzaOccurrence,
   type ExtractedBackground,
+  type SheetCrop,
+  type SheetMode,
   type VideoJobStatus,
 } from '../api/client';
 import type { BackgroundInfo } from '../types';
@@ -95,6 +100,16 @@ export default function WorshipVideoPage() {
   const [allBackgrounds, setAllBackgrounds] = useState<BackgroundInfo[]>([]);
   const [editMode, setEditMode] = useState(false);
   const [editedVideoFilename, setEditedVideoFilename] = useState<string>('');
+
+  // Optional sheet-music overlay: user uploads a score PNG/PDF, we run OMR and
+  // the renderer shows the matching snippet on each slide. Both modes share
+  // the same upload — switching only re-runs analyze against the cached file.
+  const [sheetFile, setSheetFile] = useState<File | null>(null);
+  const [sheetSession, setSheetSession] = useState<string | null>(null);
+  const [sheetCrops, setSheetCrops] = useState<SheetCrop[]>([]);
+  const [sheetAnalyzing, setSheetAnalyzing] = useState(false);
+  const [sheetMode, setSheetMode] = usePersistedState<SheetMode>('worshipVideo.sheetMode', 'rebuild');
+  const sheetInputRef = useRef<HTMLInputElement>(null);
 
   const pollRef = useRef<number | null>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
@@ -236,6 +251,23 @@ export default function WorshipVideoPage() {
   const hasFreshPreview = !!analysisId && analyzedKey === previewKey;
   const isPreviewStale = !!analysisId && !hasFreshPreview;
 
+  const runSheetAnalyzeForSlides = async (
+    session: string,
+    slideCount: number,
+    mode: SheetMode,
+  ) => {
+    if (slideCount <= 0) return;
+    setSheetAnalyzing(true);
+    try {
+      const result = await analyzeSheet(session, slideCount, mode);
+      setSheetCrops(result.crops);
+    } catch {
+      setSheetCrops([]);
+    } finally {
+      setSheetAnalyzing(false);
+    }
+  };
+
   const handleAnalyze = async () => {
     setError('');
     if (!audioFile) {
@@ -247,23 +279,53 @@ export default function WorshipVideoPage() {
       return;
     }
     setPreviewLoading(true);
+    // Run audio analysis and sheet upload in parallel so the user isn't
+    // waiting on two serial round-trips. Sheet upload is optional; a failure
+    // there just leaves crops empty.
+    const sheetUploadPromise = sheetFile
+      ? (sheetSession
+          ? Promise.resolve({ session_id: sheetSession })
+          : uploadSheet(sheetFile).catch(() => null))
+      : Promise.resolve(null);
     try {
-      const result = await analyzeWorshipAudio(
-        audioFile,
-        lyrics,
-        language,
-        maxLines,
-        maxWidth,
-      );
+      const [result, sheetUpload] = await Promise.all([
+        analyzeWorshipAudio(audioFile, lyrics, language, maxLines, maxWidth),
+        sheetUploadPromise,
+      ]);
       setAnalysisId(result.analysis_id);
       setPreviewSlides(result.slides);
       setOccurrences(result.occurrences);
       setAnalyzedKey(previewKey);
+      if (sheetUpload?.session_id) {
+        setSheetSession(sheetUpload.session_id);
+        void runSheetAnalyzeForSlides(sheetUpload.session_id, result.slides.length, sheetMode);
+      } else {
+        setSheetCrops([]);
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.detail || 'Failed to analyze audio';
       setError(msg);
     } finally {
       setPreviewLoading(false);
+    }
+  };
+
+  const handleSheetFileChange = async (f: File | null) => {
+    // Replacing the sheet invalidates any prior session — clean it up on the
+    // backend so we don't leak uploads, and clear crops until re-analyze runs.
+    if (sheetSession) {
+      await deleteSheet(sheetSession).catch(() => {});
+    }
+    setSheetFile(f);
+    setSheetSession(null);
+    setSheetCrops([]);
+  };
+
+  const handleSheetModeChange = (next: SheetMode) => {
+    if (next === sheetMode) return;
+    setSheetMode(next);
+    if (sheetSession && previewSlides.length > 0) {
+      void runSheetAnalyzeForSlides(sheetSession, previewSlides.length, next);
     }
   };
 
@@ -298,6 +360,9 @@ export default function WorshipVideoPage() {
         showPageNumbers,
         snapshot,
         template.paddingStyle,
+        sheetSession && sheetCrops.length > 0
+          ? { sessionId: sheetSession, cropFilenames: sheetCrops.map((c) => c.filename) }
+          : undefined,
       );
       setJob(created);
       startPolling(created.job_id);
@@ -638,6 +703,68 @@ export default function WorshipVideoPage() {
         </label>
       </div>
 
+      <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-medium text-slate-300">乐谱（可选）</h3>
+            <p className="text-xs text-slate-500">上传五线谱图片或 PDF，每张 slide 会自动显示对应片段</p>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <input
+              ref={sheetInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,.pdf"
+              onChange={(e) => handleSheetFileChange(e.target.files?.[0] || null)}
+              className="hidden"
+            />
+            <button
+              onClick={() => sheetInputRef.current?.click()}
+              className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              {sheetFile ? '换一张乐谱' : '选择乐谱'}
+            </button>
+            {sheetFile && (
+              <>
+                <span className="text-sm text-slate-300 truncate max-w-[200px]">
+                  {sheetFile.name}
+                </span>
+                <button
+                  onClick={() => handleSheetFileChange(null)}
+                  className="text-xs text-slate-500 hover:text-slate-300"
+                >
+                  清除
+                </button>
+              </>
+            )}
+            <div className="flex rounded-lg overflow-hidden border border-slate-600">
+              {[
+                { value: 'rebuild' as SheetMode, label: '扒谱', hint: 'homr → Verovio 干净排版' },
+                { value: 'crop' as SheetMode, label: '截图', hint: '直接使用原图像素' },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => handleSheetModeChange(opt.value)}
+                  title={opt.hint}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    sheetMode === opt.value
+                      ? 'bg-gold-600 text-white'
+                      : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {sheetAnalyzing && (
+          <p className="text-xs text-sky-300">正在识别乐谱…（首次运行会下载模型，约 2-3 分钟）</p>
+        )}
+        {!sheetAnalyzing && sheetCrops.length > 0 && (
+          <p className="text-xs text-emerald-300">✓ 已识别 {sheetCrops.length} 段乐谱</p>
+        )}
+      </div>
+
       <button
         onClick={handleAnalyze}
         disabled={previewLoading || !audioFile || !lyrics.trim()}
@@ -708,7 +835,14 @@ export default function WorshipVideoPage() {
                       </span>
                     )}
                   </div>
-                  <div className="absolute inset-[6.67%] flex items-center justify-center">
+                  <div className="absolute inset-[6.67%] flex flex-col items-center justify-center gap-[4%]">
+                    {sheetCrops[i] && (
+                      <img
+                        src={sheetCrops[i].url}
+                        alt=""
+                        className="max-h-[45%] max-w-full object-contain bg-white/95 rounded"
+                      />
+                    )}
                     <p
                       className="relative text-white text-center whitespace-pre-line font-bold drop-shadow-lg"
                       style={{

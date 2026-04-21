@@ -118,27 +118,13 @@ function TemplateDefaultsSection({
           onChange={(v) => setField('maxWidthPerRow', Math.max(1, v))}
           min={1}
         />
-        <div>
-          <NumberField
-            label={labels.maxSlides}
-            value={draft.maxSlides}
-            onChange={(v) => setField('maxSlides', Math.max(0, v))}
-            min={0}
-            hint={labels.noLimit}
-          />
-          <label className="flex items-start gap-2 text-xs text-slate-300 mt-2">
-            <input
-              type="checkbox"
-              checked={draft.excludeTitleSlide}
-              onChange={(e) => setField('excludeTitleSlide', e.target.checked)}
-              className="accent-gold-500 mt-0.5"
-            />
-            <span>
-              {labels.excludeTitle}
-              <span className="block text-slate-500 text-[11px]">{labels.excludeTitleHint}</span>
-            </span>
-          </label>
-        </div>
+        <NullableNumberField
+          label={labels.maxSlides}
+          value={draft.maxSlides > 0 ? draft.maxSlides : null}
+          onChange={(v) => setField('maxSlides', v == null ? 0 : Math.max(0, v))}
+          placeholder={labels.noLimit}
+          step={1}
+        />
         <NullableNumberField
           label={labels.primaryFontSize}
           value={draft.primaryFontSize}
@@ -262,7 +248,9 @@ function LLMSection({
         />
       )}
 
-      <p className="text-xs text-slate-500 italic">{labels.restartRequired}</p>
+      {draft.mode === 'api' && (
+        <p className="text-xs text-slate-500 italic">{labels.restartRequired}</p>
+      )}
     </SectionWithSave>
   );
 }
@@ -459,21 +447,77 @@ function ModelsDirectoryPicker({
   onChange: (v: string) => void;
   labels: LLMLabels;
 }) {
-  // A webkitdirectory picker would enumerate every blob in ``~/.ollama/models``
-  // (multi-GB) just to capture a path string — the browser hangs. The field is
-  // informational today, so a plain text input is the right primitive.
+  const pickFolder = async () => {
+    // Prefer the modern File System Access API (Chrome / Edge) — it opens
+    // a native OS folder picker WITHOUT enumerating the folder's blobs, so
+    // choosing ``~/.ollama/models`` (multi-GB) is instant.
+    const anyWindow = window as unknown as {
+      showDirectoryPicker?: () => Promise<{ name: string }>;
+    };
+    if (typeof anyWindow.showDirectoryPicker === 'function') {
+      try {
+        const handle = await anyWindow.showDirectoryPicker();
+        if (handle?.name) onChange(handle.name);
+      } catch {
+        /* user cancelled — no-op */
+      }
+      return;
+    }
+    // Safari / Firefox fallback via <input webkitdirectory>. Browsers
+    // privacy-restrict absolute paths, so we store the leaf folder name
+    // (same as the modern API) — users type the full path if they need it.
+    const input = document.createElement('input');
+    input.type = 'file';
+    (input as HTMLInputElement & { webkitdirectory?: boolean }).webkitdirectory = true;
+    input.onchange = () => {
+      const first = input.files?.[0] as (File & { webkitRelativePath?: string }) | undefined;
+      const leaf = first?.webkitRelativePath?.split('/')[0];
+      if (leaf) onChange(leaf);
+    };
+    input.click();
+  };
+
   return (
     <div>
       <label className="text-xs text-slate-400">{labels.modelsDir}</label>
       <p className="text-[11px] text-slate-500 mb-1.5 whitespace-pre-line">{labels.modelsDirHint}</p>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="~/.ollama/models"
-        className="bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm w-full focus:outline-none focus:ring-2 focus:ring-gold-500"
-      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={pickFolder}
+          title={labels.modelsDir}
+          aria-label={labels.modelsDir}
+          className="shrink-0 bg-slate-700 hover:bg-slate-600 text-slate-200 w-9 h-9 rounded flex items-center justify-center"
+        >
+          <FolderIcon />
+        </button>
+        <div className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-sm truncate">
+          {value ? (
+            <span className="text-white">{value}</span>
+          ) : (
+            <span className="text-slate-500">—</span>
+          )}
+        </div>
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="shrink-0 text-slate-500 hover:text-slate-300 text-sm"
+            aria-label="clear"
+          >
+            ×
+          </button>
+        )}
+      </div>
     </div>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h3.79a1.5 1.5 0 0 1 1.06.44L9.7 5.5h6.8A1.5 1.5 0 0 1 18 7v7.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 2 14.5v-9Z" />
+    </svg>
   );
 }
 

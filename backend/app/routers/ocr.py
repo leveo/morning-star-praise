@@ -15,10 +15,20 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
 MAX_SIZE_BYTES = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 
+class Verse(BaseModel):
+    number: int
+    lines: list[str]
+
+
+class StructuredLyrics(BaseModel):
+    verses: list[Verse]
+
+
 class OcrResponse(BaseModel):
     lyrics: str
     language: str
     pages: int
+    structured: StructuredLyrics | None = None
 
 
 @router.post("/extract", response_model=OcrResponse)

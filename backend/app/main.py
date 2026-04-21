@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routers import ppt, lyrics, backgrounds, youtube, ocr, songs, templates, videos, library, llm
+from app.routers import ppt, lyrics, backgrounds, youtube, ocr, songs, templates, videos, library, llm, sheet
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +184,7 @@ app.include_router(templates.router, prefix="/api/templates", tags=["templates"]
 app.include_router(videos.router, prefix="/api/videos", tags=["videos"])
 app.include_router(library.router, prefix="/api/library", tags=["library"])
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
+app.include_router(sheet.router, prefix="/api/sheet", tags=["sheet"])
 
 
 @app.get("/api/health")

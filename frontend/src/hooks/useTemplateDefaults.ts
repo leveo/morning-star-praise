@@ -8,11 +8,8 @@ export type PaddingStyle = 'dark' | 'light';
 export interface TemplateDefaults {
   maxLinesPerSlide: number;
   maxWidthPerRow: number;
-  /** 0 = auto (no cap). */
+  /** 0 = auto (no cap). Title slide is always extra, not counted here. */
   maxSlides: number;
-  /** When true, the ``maxSlides`` cap applies to content slides only — title
-   *  slide is extra. When false, ``maxSlides`` is the total including title. */
-  excludeTitleSlide: boolean;
   /** null means "auto by language" (40pt for zh, 36pt for en). */
   primaryFontSize: number | null;
   /** null means "auto by language" (1.5 for zh, 1.3 for en). */
@@ -25,9 +22,8 @@ export interface TemplateDefaults {
 
 export const FACTORY_TEMPLATE_DEFAULTS: TemplateDefaults = {
   maxLinesPerSlide: 6,
-  maxWidthPerRow: 12,
+  maxWidthPerRow: 16,
   maxSlides: 0,
-  excludeTitleSlide: true,
   primaryFontSize: null,
   lineSpacing: null,
   showPageNumbers: false,

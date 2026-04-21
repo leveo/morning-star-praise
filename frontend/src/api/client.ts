@@ -63,6 +63,7 @@ export async function generatePPT(
   secondaryFontSize?: number,
   lineSpacingMultiplier?: number,
   paddingStyle: 'dark' | 'light' = 'dark',
+  sheet?: { sessionId: string; cropNames: string[] },
 ): Promise<PPTGenerateResponse> {
   const { data } = await api.post<PPTGenerateResponse>('/ppt/generate', {
     title,
@@ -75,8 +76,61 @@ export async function generatePPT(
     secondary_font_size: secondaryFontSize,
     line_spacing_multiplier: lineSpacingMultiplier,
     padding_style: paddingStyle,
+    sheet_session_id: sheet?.sessionId,
+    sheet_crop_names: sheet?.cropNames,
   });
   return data;
+}
+
+// --- Sheet music (OMR) --------------------------------------------------
+
+export interface SheetCrop {
+  chunk_idx: number;
+  filename: string;
+  url: string;
+  page: number;
+  region: { y_top: number; y_bottom: number; x_left: number; x_right: number };
+}
+
+export interface SheetAnalyzeResponse {
+  session_id: string;
+  pages: number;
+  /** Distinct visual staff systems on the sheet (before cycling into chunks). */
+  system_count: number;
+  /** Number of chunk-sized crop PNGs returned (== num_chunks requested). */
+  detected_staffs: number;
+  crops: SheetCrop[];
+}
+
+export async function uploadSheet(file: File): Promise<{ session_id: string; filename: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post('/sheet/upload', form, {
+    // OMR model download (first run) + PDF rasterize can take a while.
+    timeout: 120_000,
+  });
+  return data;
+}
+
+export type SheetMode = 'rebuild' | 'crop';
+
+export async function analyzeSheet(
+  sessionId: string,
+  numChunks: number,
+  mode: SheetMode = 'rebuild',
+): Promise<SheetAnalyzeResponse> {
+  const form = new FormData();
+  form.append('session_id', sessionId);
+  form.append('num_chunks', String(numChunks));
+  form.append('mode', mode);
+  const { data } = await api.post<SheetAnalyzeResponse>('/sheet/analyze', form, {
+    timeout: 600_000,
+  });
+  return data;
+}
+
+export async function deleteSheet(sessionId: string): Promise<void> {
+  await api.delete(`/sheet/${sessionId}`);
 }
 
 // Module-level cache so concurrent mounts (WorshipVideoPage + BackgroundPicker
@@ -402,6 +456,7 @@ export async function createWorshipVideo(
   showPageNumbers: boolean = false,
   inputSnapshot?: Record<string, unknown>,
   paddingStyle: 'dark' | 'light' = 'dark',
+  sheet?: { sessionId: string; cropFilenames: string[] },
 ): Promise<VideoJobStatus> {
   const formData = new FormData();
   formData.append('analysis_id', analysisId);
@@ -434,6 +489,10 @@ export async function createWorshipVideo(
   formData.append('padding_style', paddingStyle);
   if (inputSnapshot) {
     formData.append('input_snapshot', JSON.stringify(inputSnapshot));
+  }
+  if (sheet && sheet.cropFilenames.length > 0) {
+    formData.append('sheet_session_id', sheet.sessionId);
+    formData.append('sheet_crop_filenames', sheet.cropFilenames.join(','));
   }
   const { data } = await api.post<VideoJobStatus>('/videos/create', formData);
   return data;
