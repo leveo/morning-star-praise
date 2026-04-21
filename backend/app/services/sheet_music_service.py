@@ -455,10 +455,13 @@ def split_across_chunks(
         # this degenerates to one region per call.
         out: list[CropRegion] = []
         for page, page_staffs in sorted(by_page.items()):
+            if tight_crop and len(page_staffs) > 1:
+                # Hymnal grand-staff systems are treble + bass with the
+                # printed lyrics sandwiched between them; _pair_singletons
+                # groups them as one system. Keeping only the topmost staff
+                # excludes the lyric band entirely from the crop.
+                page_staffs = [min(page_staffs, key=lambda s: s.y_top)]
             y_top = max(0, min(s.y_top for s in page_staffs) - 24)
-            # In crop mode the printed lyrics sit below the staff — drop the
-            # 80px lyrics-band padding so the slide only gets notation. In
-            # rebuild mode it's just whitespace on a clean Verovio render.
             y_bottom = max(s.y_bottom for s in page_staffs) + (12 if tight_crop else 80)
             width = image_widths.get(page, page_staffs[0].x_right)
             out.append(CropRegion(
