@@ -424,17 +424,15 @@ def _filter_and_sort_staffs(
 
 def split_across_chunks(
     staffs: list[StaffBox], num_chunks: int, image_widths: dict[int, int],
-    *, ordered: list[StaffBox] | None = None,
+    *, ordered: list[StaffBox] | None = None, tight_crop: bool = False,
 ) -> list[CropRegion]:
     """Equal-distribute detected staff systems across ``num_chunks`` slides.
 
-    Returns one :class:`CropRegion` per chunk (may be fewer if no staffs were
-    detected). Each region's y-range hugs the staff systems assigned to that
-    chunk, with a small padding; x-range spans the full page width so the
-    user's eye isn't drawn to a narrower-than-page strip.
-
-    ``ordered`` lets callers reuse an already-filtered+sorted list to avoid
-    redoing the O(n log n) sort on every dispatch.
+    ``tight_crop=True`` excludes the ~80px lyrics band typically printed
+    under the staff — use this in crop mode where the scan contains
+    printed lyrics we don't want bled into the slide (lyrics go in a
+    separate PPT text box). In rebuild mode the Verovio render has no
+    lyrics so the extra padding is harmless whitespace.
     """
     if num_chunks <= 0:
         return []
@@ -458,7 +456,10 @@ def split_across_chunks(
         out: list[CropRegion] = []
         for page, page_staffs in sorted(by_page.items()):
             y_top = max(0, min(s.y_top for s in page_staffs) - 24)
-            y_bottom = max(s.y_bottom for s in page_staffs) + 80  # room for lyrics band
+            # In crop mode the printed lyrics sit below the staff — drop the
+            # 80px lyrics-band padding so the slide only gets notation. In
+            # rebuild mode it's just whitespace on a clean Verovio render.
+            y_bottom = max(s.y_bottom for s in page_staffs) + (12 if tight_crop else 80)
             width = image_widths.get(page, page_staffs[0].x_right)
             out.append(CropRegion(
                 page=page,
@@ -611,5 +612,9 @@ def analyze(
     backend: OmrBackend = HomrBackend() if from_clean_render else OemerBackend()
     staffs = backend.detect_staffs(pages)
     ordered = _filter_and_sort_staffs(staffs, widths)
-    regions = split_across_chunks(staffs, num_chunks, widths, ordered=ordered)
+    regions = split_across_chunks(
+        staffs, num_chunks, widths,
+        ordered=ordered,
+        tight_crop=(mode == "crop"),
+    )
     return pages, regions, len(ordered)

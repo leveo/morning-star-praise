@@ -14,6 +14,9 @@ const fontPtToCqi = (pt: number) => (pt / SLIDE_HEIGHT_POINTS) * ASPECT_H_OVER_W
 interface Props {
   text: string;
   backgroundUrl: string;
+  /** When set, slide switches to the white sheet+lyrics layout that the
+   *  generated PPT uses for sheet-music slides. */
+  sheetImageUrl?: string;
   index: number;
   totalSlides?: number;
   showPageNumber?: boolean;
@@ -72,6 +75,7 @@ function classifyLines(text: string, language: string): ('primary' | 'secondary'
 export default function SlidePreview({
   text,
   backgroundUrl,
+  sheetImageUrl,
   index,
   totalSlides,
   showPageNumber,
@@ -93,6 +97,63 @@ export default function SlidePreview({
 
   const categories = classifyLines(text, language);
   const lines = text.split('\n');
+
+  // Sheet-with-lyrics layout: white slide, sheet crop top ~55%, text bottom
+  // ~40%. Mirrors `ppt_service._add_sheet_with_lyrics_slide` so the preview
+  // is a faithful thumbnail of what the downloaded PPT contains.
+  if (sheetImageUrl) {
+    return (
+      <div className="relative">
+        <div className="@container relative aspect-video rounded-lg overflow-hidden shadow-lg border border-slate-700 bg-white">
+          <div className="absolute top-[4%] left-[4%] right-[4%] h-[55%] flex items-center justify-center">
+            <img
+              src={sheetImageUrl}
+              alt="Sheet music"
+              className="max-w-full max-h-full object-contain"
+            />
+          </div>
+          <div className="absolute top-2 left-2 bg-black/60 rounded px-2 py-0.5 text-xs text-slate-300 z-10">
+            {index + 1}
+          </div>
+          {showPageNumber && totalSlides && (
+            <div className="absolute top-2 right-2 bg-black/60 rounded px-2 py-0.5 text-xs text-slate-300 z-10">
+              {index + 1}/{totalSlides}
+            </div>
+          )}
+          <div className="absolute top-[60%] left-[4%] right-[4%] bottom-[4%] flex items-center justify-center text-center text-black">
+            <div className="w-full">
+              {lines.map((line, i) => {
+                const cat = categories[i];
+                if (cat === 'spacer') {
+                  return (
+                    <div
+                      key={i}
+                      aria-hidden
+                      style={{ height: `${primaryCqi * 0.2}cqi` }}
+                    />
+                  );
+                }
+                const sizeCqi = cat === 'secondary' ? secondaryCqi : primaryCqi;
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      fontSize: `${sizeCqi}cqi`,
+                      lineHeight: spacingMult,
+                      fontWeight: cat === 'secondary' ? 400 : 700,
+                      color: cat === 'secondary' ? '#404040' : '#000000',
+                    }}
+                  >
+                    {line || '\u00A0'}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative">

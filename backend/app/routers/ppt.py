@@ -103,7 +103,21 @@ def generate_ppt(request: PPTGenerateRequest):
             bg_idx = (i + 1) % len(bg_paths) if bg_paths else 0
             bg_path = bg_paths[bg_idx] if bg_paths else None
             bg_url = bg_url_map.get(bg_path.name, "") if bg_path else ""
-        slides_preview.append({"text": slide.text, "background_url": bg_url})
+        preview: dict = {"text": slide.text, "background_url": bg_url}
+        # Match ppt_service's 1:1 indexing into sheet_crop_names (frontend
+        # already cycled to produce one name per slide when there are fewer
+        # crops than slides).
+        if (
+            request.sheet_session_id
+            and request.sheet_crop_names
+            and i < len(request.sheet_crop_names)
+        ):
+            crop_name = request.sheet_crop_names[i]
+            if crop_name and "/" not in crop_name and "\\" not in crop_name:
+                preview["sheet_image_url"] = (
+                    f"/api/sheet/preview/{request.sheet_session_id}/{crop_name}"
+                )
+        slides_preview.append(preview)
 
     if request.source_page in ("lyrics", "youtube", "ocr") and filename:
         library_service.record_item(

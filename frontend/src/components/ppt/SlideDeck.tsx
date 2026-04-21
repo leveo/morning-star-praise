@@ -8,6 +8,7 @@ import { useUILanguage, UI_TEXT } from '../../hooks/useLanguage';
 interface SlidePreviewData {
   text: string;
   background_url: string;
+  sheet_image_url?: string;
 }
 
 interface Props {
@@ -84,6 +85,7 @@ export default function SlideDeck({
             key={i}
             text={slide.text}
             backgroundUrl={slide.background_url}
+            sheetImageUrl={slide.sheet_image_url}
             index={i}
             totalSlides={slides.length}
             showPageNumber={showPageNumbers}
