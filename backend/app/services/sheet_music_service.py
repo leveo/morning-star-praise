@@ -616,15 +616,26 @@ def _detect_staffs_via_llm(image_path: Path, page_idx: int) -> list[StaffBox]:
         width, height = im.size
 
     prompt = (
-        "This image is a sheet music page. Detect each staff system on the page. "
-        "A staff system is a horizontal row of five parallel staff lines "
-        "(may be a grand staff with treble + bass bracketed together).\n\n"
-        "For each system, return the y-coordinate range covering ONLY the "
-        "staff notation — exclude any printed lyrics below, chord symbols "
-        "above, and page headers/footers. Coordinates are normalized 0-1000 "
-        "where 0 is the page top and 1000 is the page bottom. Sort top-to-bottom.\n\n"
-        'Respond with JSON ONLY (no markdown, no prose):\n'
-        '{"systems":[{"y_top":INT,"y_bottom":INT}, ...]}'
+        "This image is a sheet music page. For each staff system (a row of "
+        "5 parallel staff lines, possibly a grand staff with treble + bass), "
+        "return FOUR y-coordinates:\n"
+        "  y_staff_top:    the 5th (topmost) staff line's y-position\n"
+        "  y_staff_bottom: the 1st (bottommost) staff line's y-position\n"
+        "  y_notes_top:    topmost pixel of any notehead or ledger line ABOVE "
+        "the staff (if no notes above, equal to y_staff_top)\n"
+        "  y_notes_bottom: bottommost pixel of any notehead or ledger line BELOW "
+        "the staff (if no notes below, equal to y_staff_bottom)\n\n"
+        "CRITICAL: These y values must NOT include any text. Exclude ALL of:\n"
+        "  - printed lyrics (Chinese characters, English words, syllables)\n"
+        "  - chord symbols (letters like C, G, Dm, F7)\n"
+        "  - verse numbers, copyright lines, page numbers, section labels\n"
+        "  - tempo markings, dynamics text (p, f, crescendo)\n\n"
+        "If a notehead sits DIRECTLY on a text line, still exclude the text.\n\n"
+        "Coordinates are normalized 0-1000 (0=page top, 1000=page bottom). "
+        "Sort systems top-to-bottom.\n\n"
+        "Respond with JSON ONLY (no markdown, no prose):\n"
+        '{"systems":[{"y_staff_top":INT,"y_staff_bottom":INT,'
+        '"y_notes_top":INT,"y_notes_bottom":INT}, ...]}'
     )
 
     raw = llm_service.generate_from_image(
@@ -646,14 +657,22 @@ def _detect_staffs_via_llm(image_path: Path, page_idx: int) -> list[StaffBox]:
 
     boxes: list[StaffBox] = []
     for sys in data.get("systems") or []:
+        # Accept both the new 4-field format and the legacy 2-field one so
+        # a stale frontend or older Gemini snapshot still works.
         try:
-            y_top_n = float(sys["y_top"])
-            y_bottom_n = float(sys["y_bottom"])
+            if "y_notes_top" in sys and "y_notes_bottom" in sys:
+                y_top_n = float(sys["y_notes_top"])
+                y_bottom_n = float(sys["y_notes_bottom"])
+            else:
+                y_top_n = float(sys["y_top"])
+                y_bottom_n = float(sys["y_bottom"])
         except (KeyError, ValueError, TypeError):
             continue
-        y_top = max(0, int(y_top_n / 1000 * height))
-        y_bottom = min(height - 1, int(y_bottom_n / 1000 * height))
-        # Some models report degenerate / swapped bounds — drop them.
+        # Tiny padding to keep beam/flag tails from being clipped, but
+        # nothing like the 80px "lyrics band" the oemer path uses.
+        PAD_NORM = 6  # ~0.6% of page height = ~10 px on a 1755 px page
+        y_top = max(0, int((y_top_n - PAD_NORM) / 1000 * height))
+        y_bottom = min(height - 1, int((y_bottom_n + PAD_NORM) / 1000 * height))
         if y_bottom - y_top < 20:
             continue
         boxes.append(StaffBox(
