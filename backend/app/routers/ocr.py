@@ -58,8 +58,16 @@ def extract_from_sheet_music(file: UploadFile = File(...)):
     try:
         result = extract_lyrics_from_file(temp_path)
         return OcrResponse(**result)
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception as exc:
         logger.exception("OCR extraction failed")
-        raise HTTPException(status_code=500, detail="OCR extraction failed")
+        # Surface the actual cause to the user — "OCR extraction failed" alone
+        # makes it impossible to tell a missing poppler from a rate-limited
+        # LLM from a corrupt PDF. Truncate so huge tracebacks don't leak.
+        raise HTTPException(
+            status_code=500,
+            detail=f"{type(exc).__name__}: {str(exc)[:300]}",
+        )
     finally:
         temp_path.unlink(missing_ok=True)

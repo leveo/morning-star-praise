@@ -26,13 +26,24 @@ def _get_mime_type(path: Path) -> str:
 
 
 def _pdf_to_images(pdf_path: Path) -> list[Path]:
-    """Convert PDF pages to images using Pillow (for single-page) or pdf2image."""
+    """Convert PDF pages to images using pdf2image (poppler) or Pillow fallback."""
     try:
         from pdf2image import convert_from_path
         images = convert_from_path(str(pdf_path), dpi=150)
     except ImportError:
-        # Fallback: try Pillow for simple PDFs
         images = [Image.open(pdf_path)]
+    except Exception as exc:
+        # pdf2image can raise PDFInfoNotInstalledError, PDFPageCountError, or
+        # PDFSyntaxError. Re-raise with a human-readable message so the user
+        # knows whether to install poppler or replace a corrupt PDF.
+        raise RuntimeError(
+            f"PDF could not be rasterized: {exc}. "
+            "Check that poppler is installed (brew install poppler) "
+            "and the PDF is not corrupt."
+        ) from exc
+
+    if not images:
+        raise RuntimeError("PDF rasterized to zero pages — is the file empty?")
 
     output_paths = []
     for i, img in enumerate(images):
@@ -219,8 +230,15 @@ def extract_lyrics_from_file(file_path: Path, session_id: str = "") -> dict:
         language = "en"
         merged_verses: list[dict] = []
 
-        for page_path in page_images:
-            result = extract_lyrics_from_image(page_path, session_id=session_id)
+        for idx, page_path in enumerate(page_images, start=1):
+            try:
+                result = extract_lyrics_from_image(page_path, session_id=session_id)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Page {idx} of {len(page_images)} failed: {exc}"
+                ) from exc
+            finally:
+                page_path.unlink(missing_ok=True)
             all_lyrics.append(result["lyrics"])
             if result["language"].startswith("zh"):
                 language = result["language"]
@@ -231,7 +249,6 @@ def extract_lyrics_from_file(file_path: Path, session_id: str = "") -> dict:
             offset = merged_verses[-1]["number"] if merged_verses else 0
             for i, v in enumerate(page_struct, start=1):
                 merged_verses.append({"number": offset + i, "lines": list(v["lines"])})
-            page_path.unlink(missing_ok=True)
 
         payload = {
             "lyrics": "\n\n".join(all_lyrics),
