@@ -128,16 +128,29 @@ export default function OcrPage() {
     return out.join('\n');
   };
 
+  // Monotonic request id — each analyzeSheet call bumps this, and the
+  // handler only commits its result when its id matches. Prevents a slow
+  // earlier call from clobbering a faster later one (e.g. rebuild probe
+  // landing after the user already switched to crop mode).
+  const sheetAnalyzeReqIdRef = useRef(0);
+
   const runSheetAnalyze = async (session: string, chunkCount: number, mode: SheetMode = sheetMode) => {
     if (chunkCount <= 0) return;
+    const reqId = ++sheetAnalyzeReqIdRef.current;
     setSheetAnalyzing(true);
     try {
       const result = await analyzeSheet(session, chunkCount, mode);
-      setSheetCrops(result.crops);
+      if (sheetAnalyzeReqIdRef.current === reqId) {
+        setSheetCrops(result.crops);
+      }
     } catch {
-      setSheetCrops([]);
+      if (sheetAnalyzeReqIdRef.current === reqId) {
+        setSheetCrops([]);
+      }
     } finally {
-      setSheetAnalyzing(false);
+      if (sheetAnalyzeReqIdRef.current === reqId) {
+        setSheetAnalyzing(false);
+      }
     }
   };
 
@@ -218,8 +231,7 @@ export default function OcrPage() {
         const expanded = expandVersesBySystem(verses, sheetSystemCount, filtered);
         setSlides(expanded.map((text) => ({ text })));
         if (sheetUploadResult?.session_id) {
-          const res = await analyzeSheet(sheetUploadResult.session_id, expanded.length, sheetMode);
-          setSheetCrops(res.crops);
+          void runSheetAnalyze(sheetUploadResult.session_id, expanded.length, sheetMode);
         }
       } else if (verses && verses.length > 0) {
         const flat = verses.flatMap((v) => v.lines.map((ln) => ({ text: ln } as SlideData)));

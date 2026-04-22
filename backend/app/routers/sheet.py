@@ -137,5 +137,12 @@ def get_preview(session_id: str, name: str):
 def delete_session(session_id: str):
     d = _session_dir(session_id)
     if d.exists():
+        # Drop cached OMR entries keyed by the paths we're about to remove,
+        # so a future session that happens to pick the same path doesn't
+        # return stale crops.
+        prefix = str(d.resolve())
+        stale = [k for k in sheet_music_service._OMR_CACHE if k[0].startswith(prefix)]
+        for k in stale:
+            sheet_music_service._OMR_CACHE.pop(k, None)
         shutil.rmtree(d, ignore_errors=True)
     return {"ok": True}

@@ -570,6 +570,50 @@ def render_clean_pages(upload_pages: list[Path], work_dir: Path) -> list[Path]:
 SheetMode = Literal["rebuild", "crop"]
 
 
+# In-memory cache of the expensive OMR output keyed by (upload_path, mode).
+# OMR on a 2-page PDF costs ~2 min of oemer CPU; a session typically triggers
+# 2-3 /analyze calls back-to-back (probe at num_chunks=1, full at final count,
+# mode toggle), and without caching each pays the full toll. Cleared on
+# backend restart — bounded by the upload sessions still on disk.
+_OMR_CACHE: dict[tuple[str, str], tuple[list[Path], list[StaffBox], dict[int, int], list[StaffBox]]] = {}
+
+
+def _cached_omr(
+    upload_path: Path, mode: SheetMode,
+) -> tuple[list[Path], list[StaffBox], dict[int, int], list[StaffBox]]:
+    """Run the OMR pipeline once per (file, mode) and memoize the result."""
+    from PIL import Image
+
+    key = (str(upload_path.resolve()), mode)
+    hit = _OMR_CACHE.get(key)
+    if hit is not None:
+        return hit
+
+    original_pages = prepare_pages(upload_path)
+    pages: list[Path] = []
+    from_clean_render = False
+    if mode == "rebuild":
+        work_dir = upload_path.parent / "clean"
+        pages = render_clean_pages(original_pages, work_dir)
+        from_clean_render = bool(pages)
+    if not pages:
+        pages = original_pages
+
+    widths: dict[int, int] = {}
+    for i, p in enumerate(pages):
+        with Image.open(p) as im:
+            widths[i] = im.size[0]
+
+    # Classical-CV blank-band segmentation on clean renders; oemer's pixel
+    # detector on raw scans.
+    backend: OmrBackend = HomrBackend() if from_clean_render else OemerBackend()
+    staffs = backend.detect_staffs(pages)
+    ordered = _filter_and_sort_staffs(staffs, widths)
+
+    _OMR_CACHE[key] = (pages, staffs, widths, ordered)
+    return pages, staffs, widths, ordered
+
+
 def analyze(
     upload_path: Path, num_chunks: int, *, mode: SheetMode = "rebuild",
 ) -> tuple[list[Path], list[CropRegion], int]:
@@ -591,30 +635,7 @@ def analyze(
 
     Returns ``(page_image_paths, regions, system_count)``.
     """
-    from PIL import Image
-
-    original_pages = prepare_pages(upload_path)
-    pages: list[Path] = []
-    from_clean_render = False
-    if mode == "rebuild":
-        work_dir = upload_path.parent / "clean"
-        pages = render_clean_pages(original_pages, work_dir)
-        from_clean_render = bool(pages)
-    if not pages:
-        # Either the caller asked for crop mode or rebuild failed.
-        pages = original_pages
-
-    widths: dict[int, int] = {}
-    for i, p in enumerate(pages):
-        with Image.open(p) as im:
-            widths[i] = im.size[0]
-
-    # On clean renders, classical-CV blank-band segmentation is both simpler
-    # and more reliable than re-running the OMR CNN. On the raw scan we need
-    # oemer's pixel-level staff detector.
-    backend: OmrBackend = HomrBackend() if from_clean_render else OemerBackend()
-    staffs = backend.detect_staffs(pages)
-    ordered = _filter_and_sort_staffs(staffs, widths)
+    pages, staffs, widths, ordered = _cached_omr(upload_path, mode)
     regions = split_across_chunks(
         staffs, num_chunks, widths,
         ordered=ordered,
