@@ -5,6 +5,7 @@ import SlideDeck from '../components/ppt/SlideDeck';
 import UsageBadge from '../components/shared/UsageBadge';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
+import { useActiveLLM } from '../hooks/useActiveLLM';
 import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import { useUsageTracker } from '../hooks/useUsageTracker';
 import {
@@ -19,6 +20,12 @@ import {
 } from '../api/client';
 import type { SlideData } from '../types';
 import axios from 'axios';
+
+const SHEET_MODE_OPTIONS: { value: SheetMode; label: string; hint: string }[] = [
+  { value: 'rebuild',   label: '扒谱',      hint: 'homr → Verovio 干净排版（耗时最长，OMR 可能出错）' },
+  { value: 'crop',      label: '截图',      hint: '用 oemer 定位，直接切原图像素' },
+  { value: 'crop_llm',  label: '截图 (AI)', hint: '用当前选择的 vision LLM 定位，通常对复杂排版更准' },
+];
 
 export default function OcrPage() {
   const [uiLanguage] = useUILanguage();
@@ -45,6 +52,7 @@ export default function OcrPage() {
   type LangFilter = 'both' | 'zh' | 'en';
   const [langFilter, setLangFilter] = usePersistedState<LangFilter>('ocr.langFilter', 'both');
   const template = useTemplateDefaults();
+  const activeLLM = useActiveLLM();
   const [maxLines, setMaxLines] = usePersistedState('ocr.maxLines', template.maxLinesPerSlide);
   const [maxWidth, setMaxWidth] = usePersistedState('ocr.maxWidth', template.maxWidthPerRow);
   const [primaryFontSize, setPrimaryFontSize] = usePersistedState<number | null>(
@@ -382,13 +390,38 @@ export default function OcrPage() {
       )}
 
       {file && !lyrics && (
-        <button
-          onClick={handleExtract}
-          disabled={extracting}
-          className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
-        >
-          {extracting ? 'Extracting lyrics with AI...' : 'Extract Lyrics'}
-        </button>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-sm text-slate-300">乐谱模式:</span>
+            <div className="flex rounded-lg overflow-hidden border border-slate-600">
+              {SHEET_MODE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setSheetMode(opt.value)}
+                  title={opt.hint}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    sheetMode === opt.value
+                      ? 'bg-gold-600 text-white'
+                      : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-slate-500">
+              {SHEET_MODE_OPTIONS.find((o) => o.value === sheetMode)?.hint}
+            </span>
+          </div>
+          <ActiveLLMBadge activeLLM={activeLLM} sheetMode={sheetMode} />
+          <button
+            onClick={handleExtract}
+            disabled={extracting}
+            className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
+          >
+            {extracting ? 'Extracting lyrics with AI...' : 'Extract Lyrics'}
+          </button>
+        </div>
       )}
 
       {error && (
@@ -492,10 +525,7 @@ export default function OcrPage() {
             <div className="flex items-center gap-3">
               <span className="text-xs text-slate-400">乐谱模式:</span>
               <div className="flex rounded-lg overflow-hidden border border-slate-600">
-                {[
-                  { value: 'rebuild' as SheetMode, label: '扒谱', hint: 'homr → Verovio 干净排版' },
-                  { value: 'crop' as SheetMode, label: '截图', hint: '直接使用原图像素' },
-                ].map((opt) => (
+                {SHEET_MODE_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
                     onClick={() => handleSheetModeChange(opt.value)}
@@ -591,6 +621,58 @@ export default function OcrPage() {
           }} onSlidesChange={setPreview} />
           <UsageBadge usage={usage} />
         </>
+      )}
+    </div>
+  );
+}
+
+function ActiveLLMBadge({
+  activeLLM, sheetMode,
+}: {
+  activeLLM: ReturnType<typeof useActiveLLM>;
+  sheetMode: SheetMode;
+}) {
+  // The OCR path always calls the vision provider; the AI-detection mode
+  // also hits the vision provider. For clarity show both text (used by the
+  // OCR JSON prompt) and vision (used for the image itself) when they
+  // differ — collapse to one line when they're the same.
+  const { textProvider, textModel, textLabel, textConfigured,
+          visionProvider, visionModel, visionLabel, visionConfigured } = activeLLM;
+  const aiDetection = sheetMode === 'crop_llm';
+  const same = textProvider === visionProvider && textModel === visionModel;
+
+  const Pill = ({ label, model, configured }: { label: string; model: string; configured: boolean }) => (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded px-2 py-0.5 border ${
+        configured ? 'border-slate-600 bg-slate-800/50 text-slate-300'
+                    : 'border-amber-700/60 bg-amber-900/20 text-amber-300'
+      }`}
+    >
+      <span className="font-medium">{label || '—'}</span>
+      {model && <span className="text-slate-500">{model}</span>}
+      {!configured && <span title="API key missing">⚠</span>}
+    </span>
+  );
+
+  return (
+    <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+      <span>当前调用模型:</span>
+      {same ? (
+        <>
+          <span>OCR/视觉</span>
+          <Pill label={visionLabel} model={visionModel} configured={visionConfigured} />
+        </>
+      ) : (
+        <>
+          <span>OCR</span>
+          <Pill label={visionLabel} model={visionModel} configured={visionConfigured} />
+          <span className="text-slate-600">·</span>
+          <span>文本</span>
+          <Pill label={textLabel} model={textModel} configured={textConfigured} />
+        </>
+      )}
+      {aiDetection && (
+        <span className="text-slate-500">（AI 定位也使用视觉 provider）</span>
       )}
     </div>
   );

@@ -567,7 +567,100 @@ def render_clean_pages(upload_pages: list[Path], work_dir: Path) -> list[Path]:
     return clean_pages
 
 
-SheetMode = Literal["rebuild", "crop"]
+SheetMode = Literal["rebuild", "crop", "crop_llm"]
+
+
+class LLMBackend:
+    """Ask a vision LLM (whatever provider is active for the request) for
+    per-system y-ranges on the original scan.
+
+    Alternative to OemerBackend for crop mode. The vision LLM — typically
+    Gemini or Claude — can be asked to exclude the lyrics band directly,
+    which is more reliable than the bass-staff-drop heuristic oemer needs.
+    The active provider comes from the user's Settings (via X-LLM-* headers
+    on the request), so this honors their choice rather than hardcoding one.
+    """
+
+    def detect_staffs(self, image_paths: list[Path]) -> list[StaffBox]:
+        boxes: list[StaffBox] = []
+        for page_idx, p in enumerate(image_paths):
+            boxes.extend(_detect_staffs_via_llm(p, page_idx))
+        return boxes
+
+
+def _mime_for(path: Path) -> str:
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }.get(path.suffix.lower(), "image/png")
+
+
+def _detect_staffs_via_llm(image_path: Path, page_idx: int) -> list[StaffBox]:
+    """Call the active vision LLM and parse a JSON list of staff y-bounds.
+
+    Uses the normalized 0-1000 coordinate system Gemini-class models were
+    trained on for 2D bounding boxes — noticeably more accurate than raw
+    pixel output. Any vision LLM that can produce JSON should work; if
+    JSON parsing fails we return [] and the caller surfaces "no staves".
+    """
+    import json
+    import re
+
+    from PIL import Image
+
+    from app.services import llm_service
+
+    with Image.open(image_path) as im:
+        width, height = im.size
+
+    prompt = (
+        "This image is a sheet music page. Detect each staff system on the page. "
+        "A staff system is a horizontal row of five parallel staff lines "
+        "(may be a grand staff with treble + bass bracketed together).\n\n"
+        "For each system, return the y-coordinate range covering ONLY the "
+        "staff notation — exclude any printed lyrics below, chord symbols "
+        "above, and page headers/footers. Coordinates are normalized 0-1000 "
+        "where 0 is the page top and 1000 is the page bottom. Sort top-to-bottom.\n\n"
+        'Respond with JSON ONLY (no markdown, no prose):\n'
+        '{"systems":[{"y_top":INT,"y_bottom":INT}, ...]}'
+    )
+
+    raw = llm_service.generate_from_image(
+        image_path.read_bytes(),
+        _mime_for(image_path),
+        prompt,
+        action="sheet_detect",
+    )
+
+    match = re.search(r"\{[\s\S]*\}", raw)
+    if not match:
+        logger.warning("LLM staff detection returned no JSON for %s: %s", image_path, raw[:200])
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        logger.warning("LLM staff detection returned invalid JSON for %s", image_path)
+        return []
+
+    boxes: list[StaffBox] = []
+    for sys in data.get("systems") or []:
+        try:
+            y_top_n = float(sys["y_top"])
+            y_bottom_n = float(sys["y_bottom"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        y_top = max(0, int(y_top_n / 1000 * height))
+        y_bottom = min(height - 1, int(y_bottom_n / 1000 * height))
+        # Some models report degenerate / swapped bounds — drop them.
+        if y_bottom - y_top < 20:
+            continue
+        boxes.append(StaffBox(
+            page=page_idx, y_top=y_top, y_bottom=y_bottom,
+            x_left=0, x_right=width,
+        ))
+    return boxes
 
 
 # In-memory cache of the expensive OMR output keyed by (upload_path, mode).
@@ -604,9 +697,16 @@ def _cached_omr(
         with Image.open(p) as im:
             widths[i] = im.size[0]
 
-    # Classical-CV blank-band segmentation on clean renders; oemer's pixel
-    # detector on raw scans.
-    backend: OmrBackend = HomrBackend() if from_clean_render else OemerBackend()
+    # Backend selection:
+    #   rebuild (clean render ok) → CV blank-band on clean Verovio output
+    #   crop_llm                  → vision LLM bounding-box detection
+    #   crop (or rebuild fallback)→ oemer's pixel detector on scan
+    if from_clean_render:
+        backend: OmrBackend = HomrBackend()
+    elif mode == "crop_llm":
+        backend = LLMBackend()
+    else:
+        backend = OemerBackend()
     staffs = backend.detect_staffs(pages)
     ordered = _filter_and_sort_staffs(staffs, widths)
 
@@ -636,9 +736,11 @@ def analyze(
     Returns ``(page_image_paths, regions, system_count)``.
     """
     pages, staffs, widths, ordered = _cached_omr(upload_path, mode)
+    # Gemini was already asked to exclude lyrics; oemer's crop mode needs
+    # the bass-staff-drop heuristic. Both take the tight padding path.
     regions = split_across_chunks(
         staffs, num_chunks, widths,
         ordered=ordered,
-        tight_crop=(mode == "crop"),
+        tight_crop=(mode in ("crop", "crop_llm")),
     )
     return pages, regions, len(ordered)

@@ -737,10 +737,11 @@ export default function WorshipVideoPage() {
               </>
             )}
             <div className="flex rounded-lg overflow-hidden border border-slate-600">
-              {[
-                { value: 'rebuild' as SheetMode, label: '扒谱', hint: 'homr → Verovio 干净排版' },
-                { value: 'crop' as SheetMode, label: '截图', hint: '直接使用原图像素' },
-              ].map((opt) => (
+              {([
+                { value: 'rebuild',  label: '扒谱',      hint: 'homr → Verovio 干净排版' },
+                { value: 'crop',     label: '截图',      hint: '用 oemer 定位，切原图像素' },
+                { value: 'crop_llm', label: '截图 (AI)', hint: '用当前 vision LLM 定位' },
+              ] as { value: SheetMode; label: string; hint: string }[]).map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => handleSheetModeChange(opt.value)}

@@ -71,7 +71,7 @@ async def upload_sheet(file: UploadFile = File(...)):
 async def analyze_sheet(
     session_id: str = Form(...),
     num_chunks: int = Form(...),
-    mode: Literal["rebuild", "crop"] = Form("rebuild"),
+    mode: Literal["rebuild", "crop", "crop_llm"] = Form("rebuild"),
 ):
     d = _session_dir(session_id)
     uploads = list(d.glob("upload.*"))

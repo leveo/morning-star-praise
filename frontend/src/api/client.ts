@@ -112,7 +112,7 @@ export async function uploadSheet(file: File): Promise<{ session_id: string; fil
   return data;
 }
 
-export type SheetMode = 'rebuild' | 'crop';
+export type SheetMode = 'rebuild' | 'crop' | 'crop_llm';
 
 export async function analyzeSheet(
   sessionId: string,
