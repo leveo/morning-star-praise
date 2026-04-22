@@ -69,10 +69,12 @@ export function useActiveLLM(): ActiveLLM {
   const textMeta = findProvider(status, textProvider);
   const visionMeta = findProvider(status, visionProvider);
 
-  const textModel =
-    settings.textModel || textMeta?.default_text_model || '';
-  const visionModel =
-    settings.visionModel || visionMeta?.default_vision_model || '';
+  // Model fields are per-mode — reading from the wrong pair is exactly the
+  // bug that sent 'qwen3-vl:8b' into a Gemini request and 404'd.
+  const userTextModel = settings.mode === 'local' ? settings.localTextModel : settings.apiTextModel;
+  const userVisionModel = settings.mode === 'local' ? settings.localVisionModel : settings.apiVisionModel;
+  const textModel = userTextModel || textMeta?.default_text_model || '';
+  const visionModel = userVisionModel || visionMeta?.default_vision_model || '';
 
   return {
     textProvider,

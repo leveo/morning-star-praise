@@ -393,15 +393,15 @@ function APIProviderPicker({
         />
         <ModelField
           label={labels.textModel}
-          value={draft.textModel}
+          value={draft.apiTextModel}
           placeholder={textMeta?.default_text_model || labels.modelPlaceholderDefault}
-          onChange={(v) => onChange('textModel', v)}
+          onChange={(v) => onChange('apiTextModel', v)}
         />
         <ModelField
           label={labels.visionModel}
-          value={draft.visionModel}
+          value={draft.apiVisionModel}
           placeholder={visionMeta?.default_vision_model || labels.modelPlaceholderDefault}
-          onChange={(v) => onChange('visionModel', v)}
+          onChange={(v) => onChange('apiVisionModel', v)}
         />
       </div>
       {textMeta && !textMeta.configured && <ConfigureHint meta={textMeta} labels={labels} />}
@@ -448,17 +448,17 @@ function LocalProviderPicker({
       <div className="grid grid-cols-2 gap-4">
         <ModelDropdown
           label={labels.textModel}
-          value={draft.textModel}
+          value={draft.localTextModel}
           options={textOptions}
           placeholder={labels.modelPlaceholderDefault}
-          onChange={(v) => onChange('textModel', v)}
+          onChange={(v) => onChange('localTextModel', v)}
         />
         <ModelDropdown
           label={labels.visionModel}
-          value={draft.visionModel}
+          value={draft.localVisionModel}
           options={visionOptions}
           placeholder={labels.modelPlaceholderDefault}
-          onChange={(v) => onChange('visionModel', v)}
+          onChange={(v) => onChange('localVisionModel', v)}
         />
       </div>
     </div>

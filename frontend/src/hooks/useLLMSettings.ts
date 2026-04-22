@@ -9,10 +9,16 @@ export interface LLMSettings {
   /** 'local' = use Ollama with the configured text/vision models;
    *  'api' = use one of the cloud providers chosen by textProvider/visionProvider. */
   mode: LLMMode;
-  textProvider: string;      // e.g. 'gemini', 'openai'
+  textProvider: string;      // e.g. 'gemini', 'openai' — API mode only
   visionProvider: string;
-  textModel: string;          // empty = provider default
-  visionModel: string;        // empty = provider default
+  /** Models are stored PER MODE so a stale Ollama model name (e.g.
+   *  'qwen3-vl:8b') can't leak into an API-mode Gemini request and
+   *  produce a 404 NOT_FOUND. `resolveLLMHeaders` picks the pair that
+   *  matches the currently active mode. Empty = provider default. */
+  apiTextModel: string;
+  apiVisionModel: string;
+  localTextModel: string;
+  localVisionModel: string;
   /** Optional: path to the Ollama models folder. Informational / for future
    *  features that might launch a local model runtime directly. Not used
    *  for routing today — routing goes through whatever Ollama server is
@@ -24,32 +30,63 @@ export const DEFAULT_LLM_SETTINGS: LLMSettings = {
   mode: 'local',
   textProvider: '',
   visionProvider: '',
-  textModel: '',
-  visionModel: '',
+  apiTextModel: '',
+  apiVisionModel: '',
+  localTextModel: '',
+  localVisionModel: '',
   ollamaModelsDir: '',
 };
+
+/** Migrate pre-split-model settings: older versions stored `textModel` /
+ *  `visionModel` as a single pair that could leak across modes. Route each
+ *  legacy value to the mode-appropriate slot — Ollama-style tags (with ':')
+ *  go to local; anything else is assumed to be an API model. Called from
+ *  `read()` so migration happens the first time a user opens the new build. */
+function migrateLegacyModelFields(raw: Record<string, unknown>): Record<string, unknown> {
+  const legacyText = typeof raw.textModel === 'string' ? raw.textModel : '';
+  const legacyVision = typeof raw.visionModel === 'string' ? raw.visionModel : '';
+  if (!legacyText && !legacyVision) return raw;
+
+  const looksLocal = (m: string) => m.includes(':');
+  const out = { ...raw };
+
+  if (legacyText && !out.apiTextModel && !out.localTextModel) {
+    if (looksLocal(legacyText)) out.localTextModel = legacyText;
+    else out.apiTextModel = legacyText;
+  }
+  if (legacyVision && !out.apiVisionModel && !out.localVisionModel) {
+    if (looksLocal(legacyVision)) out.localVisionModel = legacyVision;
+    else out.apiVisionModel = legacyVision;
+  }
+  delete out.textModel;
+  delete out.visionModel;
+  return out;
+}
 
 const store = createPersistedGlobalState<LLMSettings>({
   storageKey: 'app.llmSettings',
   eventName: 'app.llmSettings.changed',
   factoryDefaults: DEFAULT_LLM_SETTINGS,
+  migrate: migrateLegacyModelFields,
 });
 
 /** Derive the X-LLM-* headers for the current mode. Local forces Ollama on
- *  both modalities; API forwards the user's per-modality provider choice. */
+ *  both modalities; API forwards the user's per-modality provider choice.
+ *  Each mode reads its OWN model fields so switching modes can't leak a
+ *  stale model name (e.g. an Ollama tag) into the other provider's API. */
 export function resolveLLMHeaders(s: LLMSettings): Record<string, string> {
   const headers: Record<string, string> = {};
   if (s.mode === 'local') {
     headers['X-LLM-Text-Provider'] = 'ollama';
     headers['X-LLM-Vision-Provider'] = 'ollama';
-    if (s.textModel) headers['X-LLM-Text-Model'] = s.textModel;
-    if (s.visionModel) headers['X-LLM-Vision-Model'] = s.visionModel;
+    if (s.localTextModel) headers['X-LLM-Text-Model'] = s.localTextModel;
+    if (s.localVisionModel) headers['X-LLM-Vision-Model'] = s.localVisionModel;
     return headers;
   }
   if (s.textProvider) headers['X-LLM-Text-Provider'] = s.textProvider;
   if (s.visionProvider) headers['X-LLM-Vision-Provider'] = s.visionProvider;
-  if (s.textModel) headers['X-LLM-Text-Model'] = s.textModel;
-  if (s.visionModel) headers['X-LLM-Vision-Model'] = s.visionModel;
+  if (s.apiTextModel) headers['X-LLM-Text-Model'] = s.apiTextModel;
+  if (s.apiVisionModel) headers['X-LLM-Vision-Model'] = s.apiVisionModel;
   return headers;
 }
 

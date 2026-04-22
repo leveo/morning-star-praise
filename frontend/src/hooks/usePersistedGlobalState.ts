@@ -15,16 +15,21 @@ export function createPersistedGlobalState<T extends object>(opts: {
   storageKey: string;
   eventName: string;
   factoryDefaults: T;
+  /** Optional: transform the raw stored object before merging with defaults.
+   *  Use this to rename/move fields when the schema changes, so users with
+   *  an older localStorage entry don't see defaults for the whole object. */
+  migrate?: (raw: Record<string, unknown>) => Record<string, unknown>;
 }) {
-  const { storageKey, eventName, factoryDefaults } = opts;
+  const { storageKey, eventName, factoryDefaults, migrate } = opts;
 
   function read(): T {
     if (typeof window === 'undefined') return factoryDefaults;
     try {
       const raw = window.localStorage.getItem(storageKey);
       if (!raw) return factoryDefaults;
-      const parsed = JSON.parse(raw) as Partial<T>;
-      return { ...factoryDefaults, ...parsed };
+      let parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (migrate) parsed = migrate(parsed);
+      return { ...factoryDefaults, ...(parsed as Partial<T>) };
     } catch {
       return factoryDefaults;
     }
