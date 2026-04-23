@@ -21,6 +21,42 @@ import {
 
 type LLMLabels = typeof UI_TEXT['zh']['templates'];
 
+/** Per-provider suggested model names. Surfaced as a datalist beside the
+ *  ModelField input so users can pick a known model without typing it,
+ *  while still allowing any custom value for new models Google/etc. ship.
+ *  Update when new models appear; irrelevant entries in a list (e.g. an
+ *  embedding model listed under vision) are a deliberate discoverability
+ *  choice — user can select and see if it works for their flow. */
+const PROVIDER_MODEL_SUGGESTIONS: {
+  [key: string]: { text: string[]; vision: string[] };
+} = {
+  gemini: {
+    text: [
+      'gemini-3.1-flash',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+    ],
+    vision: [
+      'gemini-3.1-flash-image-preview',
+      'gemini-2.5-flash-image-preview',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+      'gemini-embedding-2',
+    ],
+  },
+  openai: {
+    text: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
+    vision: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+  },
+  anthropic: {
+    text: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'],
+    vision: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5-20251001'],
+  },
+  qwen: { text: ['qwen-plus', 'qwen-max'], vision: ['qwen-vl-plus', 'qwen-vl-max'] },
+  glm: { text: ['glm-4-flash', 'glm-4-plus'], vision: ['glm-4v-flash', 'glm-4v-plus'] },
+  minimax: { text: ['abab6.5s-chat'], vision: ['abab6.5s-chat'] },
+};
+
 export default function TemplatesPage() {
   const [uiLanguage] = useUILanguage();
   const t = UI_TEXT[uiLanguage].templates;
@@ -396,12 +432,14 @@ function APIProviderPicker({
           value={draft.apiTextModel}
           placeholder={textMeta?.default_text_model || labels.modelPlaceholderDefault}
           onChange={(v) => onChange('apiTextModel', v)}
+          suggestions={PROVIDER_MODEL_SUGGESTIONS[draft.textProvider]?.text}
         />
         <ModelField
           label={labels.visionModel}
           value={draft.apiVisionModel}
           placeholder={visionMeta?.default_vision_model || labels.modelPlaceholderDefault}
           onChange={(v) => onChange('apiVisionModel', v)}
+          suggestions={PROVIDER_MODEL_SUGGESTIONS[draft.visionProvider]?.vision}
         />
       </div>
       {textMeta && !textMeta.configured && <ConfigureHint meta={textMeta} labels={labels} />}
@@ -605,13 +643,20 @@ function ModelDropdown({
 }
 
 function ModelField({
-  label, value, placeholder, onChange,
+  label, value, placeholder, onChange, suggestions,
 }: {
   label: string;
   value: string;
   placeholder: string;
   onChange: (v: string) => void;
+  /** Optional datalist of known model names for the current provider.
+   *  Rendered as a native combobox — user still sees a text input and
+   *  can type any custom value, but gets autocomplete + a dropdown arrow. */
+  suggestions?: string[];
 }) {
+  const listId = suggestions && suggestions.length > 0
+    ? `modelfield-${label.replace(/\s+/g, '-').toLowerCase()}`
+    : undefined;
   return (
     <div>
       <label className="text-xs text-slate-400">{label}</label>
@@ -620,8 +665,14 @@ function ModelField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        list={listId}
         className="bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm w-full focus:outline-none focus:ring-2 focus:ring-gold-500"
       />
+      {listId && (
+        <datalist id={listId}>
+          {suggestions!.map((m) => <option key={m} value={m} />)}
+        </datalist>
+      )}
     </div>
   );
 }
