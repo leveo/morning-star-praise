@@ -195,8 +195,15 @@ def generate_from_image(
     *,
     session_id: str = "",
     action: str = "vision",
+    model_override: str | None = None,
 ) -> str:
-    """Run a vision+text prompt through the active vision provider."""
+    """Run a vision+text prompt through the active vision provider.
+
+    ``model_override`` lets a caller (e.g. the two-stage sheet detector)
+    pin a specific model per call without stomping the session-wide
+    contextvar. Useful when a single flow intentionally uses different
+    models for different stages.
+    """
     provider = active_vision_provider()
     if not provider:
         raise LLMDisabledError(
@@ -204,7 +211,7 @@ def generate_from_image(
             + ", ".join(sorted(DEFAULT_VISION_MODELS.keys()))
         )
 
-    model = active_vision_model(provider)
+    model = model_override or active_vision_model(provider)
     if provider == "gemini":
         return _gemini_vision(
             image_bytes, mime_type, prompt, model,
