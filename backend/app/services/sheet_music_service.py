@@ -571,37 +571,18 @@ SheetMode = Literal["rebuild", "crop", "crop_llm"]
 
 
 class LLMBackend:
-    """Two-stage vision-LLM staff detector.
+    """Single-call vision-LLM staff detector.
 
-    Stage 1 — coarse localization (cheap/fast model): on the full page,
-    ask the model for each system's staff band AND its corresponding
-    lyrics band. The user's configured vision model runs this stage,
-    which produces generous y-ranges that are guaranteed to contain the
-    staff plus some slack.
-
-    Stage 2 — refinement (high-quality vision model): for each stage-1
-    system, crop a region covering staff+lyrics and ask a stronger
-    model to return the EXACT y-bounds of the staff *alone*. Stage 2
-    coords are relative to the crop and remapped to the page.
-
-    The net effect is a tight, text-free staff crop: stage 1 gets near
-    the right answer quickly, stage 2 refines away any lyrics band,
-    chord symbols, or verse labels that stage 1 might have over-
-    captured. The lyric text itself is not returned here — it comes
-    from the separate OCR call on the page, which becomes the PPT
-    text box below the crop.
+    Asks the active vision model for per-system y-bounds on the page,
+    explicitly excluding any text (lyrics, chord symbols, verse numbers).
+    The lyric text itself still goes through the separate OCR call and
+    becomes the PPT text box below each crop.
     """
-
-    # The refinement model is pinned because its job (precise bounding-box
-    # inside a pre-cropped region) needs a model that's actually a vision
-    # classifier, not an embedding/generation-only variant. Stage 1 uses
-    # whatever the user chose (cheap/experimental is fine).
-    REFINE_MODEL = "gemini-3.1-flash-image-preview"
 
     def detect_staffs(self, image_paths: list[Path]) -> list[StaffBox]:
         boxes: list[StaffBox] = []
         for page_idx, p in enumerate(image_paths):
-            boxes.extend(_detect_staffs_two_stage(p, page_idx, self.REFINE_MODEL))
+            boxes.extend(_detect_staffs_via_llm(p, page_idx))
         return boxes
 
 
@@ -614,65 +595,16 @@ def _mime_for(path: Path) -> str:
     }.get(path.suffix.lower(), "image/png")
 
 
-def _parse_json_block(raw: str) -> dict | None:
-    """Extract the first {...} JSON object from a model response; tolerate
-    markdown fences and surrounding prose. Returns None on parse failure."""
+def _detect_staffs_via_llm(image_path: Path, page_idx: int) -> list[StaffBox]:
+    """Single LLM call returning per-system staff y-bounds with text excluded.
+
+    Uses Gemini's native 0-1000 normalized bounding-box coordinate system.
+    Asks for four y-values (staff lines + note extrema) so the model has
+    to think about the structure explicitly, which empirically cuts down
+    on text bleed versus a single top/bottom pair.
+    """
     import json
     import re
-
-    m = re.search(r"\{[\s\S]*\}", raw)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except ValueError:
-        return None
-
-
-_STAGE1_PROMPT = (
-    "This image is a sheet music page. For each staff system (a row of "
-    "5 parallel staff lines, possibly a grand staff with treble + bass), "
-    "return two y-bands in normalized coordinates 0-1000 (0=page top):\n"
-    "  staff: the band containing the 5 staff lines and their noteheads / "
-    "ledger lines — a coarse estimate that may include a small margin of "
-    "safety above and below.\n"
-    "  lyrics: the band containing the printed lyric text directly under "
-    "that staff (may be empty if no lyrics under this system).\n\n"
-    "Sort top-to-bottom. Respond with JSON ONLY:\n"
-    '{"systems":[{"staff":{"y_top":INT,"y_bottom":INT},'
-    '"lyrics":{"y_top":INT,"y_bottom":INT}}, ...]}'
-)
-
-
-_STAGE2_PROMPT = (
-    "This image is a CROP of ONE staff system plus the lyrics printed "
-    "directly below it. Return the exact y-bounds of the STAFF notation "
-    "alone, EXCLUDING all text. The result will be used to re-crop the "
-    "image so only the music remains — any text inside the returned band "
-    "will appear in the final slide, which is wrong.\n\n"
-    "Exclude from the band:\n"
-    "  - all printed lyrics (Chinese characters, English words, syllables)\n"
-    "  - chord symbols above the staff (C, G, Dm, F7, etc.)\n"
-    "  - verse numbers, tempo markings, dynamics (p/f/crescendo), labels\n\n"
-    "Include in the band:\n"
-    "  - the 5 staff lines\n"
-    "  - noteheads, stems, beams, flags, ties, slurs, ledger lines above "
-    "or below the staff\n"
-    "  - barlines\n\n"
-    "Coordinates are normalized 0-1000 where 0 is the top of THIS CROP "
-    "(not the page) and 1000 is its bottom.\n\n"
-    "Respond with JSON ONLY:\n"
-    '{"staff":{"y_top":INT,"y_bottom":INT}}'
-)
-
-
-def _detect_staffs_two_stage(
-    image_path: Path, page_idx: int, refine_model: str,
-) -> list[StaffBox]:
-    """Stage 1 locate (via user's active vision model) → stage 2 refine
-    (via ``refine_model``) per system. Returns text-free staff boxes in
-    page coordinates."""
-    from io import BytesIO
 
     from PIL import Image
 
@@ -681,91 +613,68 @@ def _detect_staffs_two_stage(
     with Image.open(image_path) as im:
         width, height = im.size
 
-    # ---- Stage 1: coarse system localization on the full page --------------
-    stage1_raw = llm_service.generate_from_image(
+    prompt = (
+        "This image is a sheet music page. For each staff system (a row of "
+        "5 parallel staff lines, possibly a grand staff with treble + bass), "
+        "return FOUR y-coordinates:\n"
+        "  y_staff_top:    the 5th (topmost) staff line's y-position\n"
+        "  y_staff_bottom: the 1st (bottommost) staff line's y-position\n"
+        "  y_notes_top:    topmost pixel of any notehead or ledger line ABOVE "
+        "the staff (if no notes above, equal to y_staff_top)\n"
+        "  y_notes_bottom: bottommost pixel of any notehead or ledger line BELOW "
+        "the staff (if no notes below, equal to y_staff_bottom)\n\n"
+        "CRITICAL: These y values must NOT include any text. Exclude ALL of:\n"
+        "  - printed lyrics (Chinese characters, English words, syllables)\n"
+        "  - chord symbols (letters like C, G, Dm, F7)\n"
+        "  - verse numbers, copyright lines, page numbers, section labels\n"
+        "  - tempo markings, dynamics text (p, f, crescendo)\n\n"
+        "If a notehead sits DIRECTLY on a text line, still exclude the text.\n\n"
+        "Coordinates are normalized 0-1000 (0=page top, 1000=page bottom). "
+        "Sort systems top-to-bottom.\n\n"
+        "Respond with JSON ONLY (no markdown, no prose):\n"
+        '{"systems":[{"y_staff_top":INT,"y_staff_bottom":INT,'
+        '"y_notes_top":INT,"y_notes_bottom":INT}, ...]}'
+    )
+
+    raw = llm_service.generate_from_image(
         image_path.read_bytes(),
         _mime_for(image_path),
-        _STAGE1_PROMPT,
-        action="sheet_detect_coarse",
+        prompt,
+        action="sheet_detect",
     )
-    stage1 = _parse_json_block(stage1_raw)
-    if not stage1:
-        logger.warning("Stage-1 LLM returned no JSON for %s: %s", image_path, stage1_raw[:200])
+
+    match = re.search(r"\{[\s\S]*\}", raw)
+    if not match:
+        logger.warning("LLM staff detection returned no JSON for %s: %s", image_path, raw[:200])
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        logger.warning("LLM staff detection returned invalid JSON for %s", image_path)
         return []
 
     boxes: list[StaffBox] = []
-    with Image.open(image_path) as im:
-        for sys in stage1.get("systems") or []:
-            staff_coarse = sys.get("staff") or {}
-            lyrics_coarse = sys.get("lyrics") or {}
-            try:
-                cs_top = int(float(staff_coarse["y_top"]))
-                cs_bot = int(float(staff_coarse["y_bottom"]))
-            except (KeyError, ValueError, TypeError):
-                continue
-            # Union with lyrics band (if present) + 3% page slack so stage 2
-            # can see the context it needs to separate music from text.
-            cl_top = int(float(lyrics_coarse.get("y_top") or cs_top))
-            cl_bot = int(float(lyrics_coarse.get("y_bottom") or cs_bot))
-            union_top = max(0, min(cs_top, cl_top) - 30)
-            union_bot = min(1000, max(cs_bot, cl_bot) + 30)
-            px_top = max(0, int(union_top / 1000 * height))
-            px_bot = min(height - 1, int(union_bot / 1000 * height))
-            if px_bot - px_top < 40:
-                continue
-
-            # ---- Stage 2: refine staff bounds inside the coarse crop -------
-            crop = im.crop((0, px_top, width, px_bot))
-            buf = BytesIO()
-            crop.save(buf, format="PNG")
-            try:
-                stage2_raw = llm_service.generate_from_image(
-                    buf.getvalue(),
-                    "image/png",
-                    _STAGE2_PROMPT,
-                    action="sheet_detect_refine",
-                    model_override=refine_model,
-                )
-            except Exception as exc:
-                logger.warning("Stage-2 refine failed for system on page %d: %s", page_idx, exc)
-                # Fall back to the stage-1 staff bounds directly; better a
-                # slightly-loose crop than no crop at all for this system.
-                boxes.append(StaffBox(
-                    page=page_idx,
-                    y_top=max(0, int(cs_top / 1000 * height)),
-                    y_bottom=min(height - 1, int(cs_bot / 1000 * height)),
-                    x_left=0, x_right=width,
-                ))
-                continue
-
-            stage2 = _parse_json_block(stage2_raw)
-            staff_refined = (stage2 or {}).get("staff") or {}
-            try:
-                local_top = float(staff_refined["y_top"])
-                local_bot = float(staff_refined["y_bottom"])
-            except (KeyError, ValueError, TypeError):
-                logger.warning("Stage-2 returned no usable bounds, using stage-1 fallback")
-                boxes.append(StaffBox(
-                    page=page_idx,
-                    y_top=max(0, int(cs_top / 1000 * height)),
-                    y_bottom=min(height - 1, int(cs_bot / 1000 * height)),
-                    x_left=0, x_right=width,
-                ))
-                continue
-
-            crop_h = px_bot - px_top
-            global_top = px_top + int(local_top / 1000 * crop_h)
-            global_bot = px_top + int(local_bot / 1000 * crop_h)
-            # 8px hard pad so beam tails / ledger dots aren't sliced.
-            global_top = max(0, global_top - 8)
-            global_bot = min(height - 1, global_bot + 8)
-            if global_bot - global_top < 20:
-                continue
-            boxes.append(StaffBox(
-                page=page_idx, y_top=global_top, y_bottom=global_bot,
-                x_left=0, x_right=width,
-            ))
-
+    for sys in data.get("systems") or []:
+        # Accept both the 4-field format and the legacy 2-field one so a
+        # stale response or alternate provider still works.
+        try:
+            if "y_notes_top" in sys and "y_notes_bottom" in sys:
+                y_top_n = float(sys["y_notes_top"])
+                y_bottom_n = float(sys["y_notes_bottom"])
+            else:
+                y_top_n = float(sys["y_top"])
+                y_bottom_n = float(sys["y_bottom"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        PAD_NORM = 6  # ~0.6% of page height = ~10 px on a 1755 px page
+        y_top = max(0, int((y_top_n - PAD_NORM) / 1000 * height))
+        y_bottom = min(height - 1, int((y_bottom_n + PAD_NORM) / 1000 * height))
+        if y_bottom - y_top < 20:
+            continue
+        boxes.append(StaffBox(
+            page=page_idx, y_top=y_top, y_bottom=y_bottom,
+            x_left=0, x_right=width,
+        ))
     return boxes
 
 

@@ -119,7 +119,7 @@ DEFAULT_TEXT_MODELS = {
 DEFAULT_VISION_MODELS = {
     "openai": "gpt-4o",
     "anthropic": "claude-sonnet-4-6",
-    "gemini": "gemini-embedding-2",
+    "gemini": "gemini-3.1-flash-image-preview",
     "minimax": "abab6.5s-chat",  # supports vision
     "qwen": "qwen-vl-plus",
     "glm": "glm-4v-flash",
