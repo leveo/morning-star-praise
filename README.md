@@ -6,6 +6,21 @@ Automated workflow that turns lyrics, sheet music, and web resources into multil
 
 ---
 
+## Who it's for
+
+Worship teams and church media volunteers who currently spend hours every week hand-building slide decks before each service. If any of these sound familiar, this project is for you:
+
+- **"I have lyrics in a text file / Word doc — I just want a PPT with our backgrounds and fonts."** Paste the lyrics, pick backgrounds, download a finished `.pptx`.
+- **"Someone sent me a YouTube link of the song we want to sing — now I have to transcribe it."** Paste the URL; the app pulls captions (or runs OCR on frames if there are none) and produces the slides.
+- **"We have a printed sheet-music score and want each slide to show the music + lyrics."** Upload the sheet image or PDF; the app auto-segments staff systems, crops per-slide fragments, and pairs each fragment with a lyrics box.
+- **"We have an MP3 of the song and want a karaoke / worship video to project."** Upload the MP3 + lyrics; the app aligns lyrics to the audio (handles repeated choruses) and renders an MP4 with slides that change exactly when each line is sung — including per-character karaoke highlight.
+- **"Our songs are bilingual (Chinese + English) and translating + formatting them is painful."** Translation runs through your chosen LLM; both languages render side-by-side on the same slide.
+- **"We can't / won't send our church's data to a cloud LLM."** Run in pure-local mode — `faster-whisper` for audio + Ollama for OCR / translation, fully offline.
+
+如果你的敬拜团每周都要花几个小时手动做 PPT 或敬拜视频,这个项目就是为你而做。无论是把歌词文件变 PPT、把 YouTube 视频转成 PPT、把乐谱扫描件做成带歌词的幻灯片,还是把一段 MP3 + 歌词渲染成 slide 与人声同步切换的视频,都可以一键完成。完全支持纯本地模式(无需任何 API key),也支持中英双语自动翻译排版。
+
+---
+
 ## Features
 
 - **Lyric → PPT** — Paste text, a YouTube URL, a `.pptx`, a PDF, or an image; get a finished `.pptx` with your background pool, fonts, and optional bilingual translation.
