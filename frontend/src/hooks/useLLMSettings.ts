@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2025 Leo Song
 import { createPersistedGlobalState } from './usePersistedGlobalState';
 
 /** Per-user LLM routing — stored in localStorage, sent to the backend via

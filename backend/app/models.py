@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 from typing import Literal
 
 from pydantic import BaseModel

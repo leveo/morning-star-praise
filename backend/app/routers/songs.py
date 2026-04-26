@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from pydantic import BaseModel
 

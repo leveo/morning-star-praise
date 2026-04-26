@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2025 Leo Song
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BackgroundInfo } from '../../types';
 import { getBackgrounds, invalidateBackgroundsCache } from '../../api/client';

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 from pathlib import Path
 
 from app.secrets import get_secret

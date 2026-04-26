@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 """Generate landscape motion backgrounds via ffmpeg ken-burns on real photos.
 
 Run from the backend dir:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 """Process-local job state for worship-video generation.
 
 We previously persisted to Postgres so jobs could survive backend restarts,

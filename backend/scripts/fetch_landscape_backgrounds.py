@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 """Fetch curated landscape photos from Wikimedia Commons.
 
 Run from the backend dir:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 """Sheet music upload + analysis.
 
 POST /api/sheet/upload   — accept image/PDF, return a session_id

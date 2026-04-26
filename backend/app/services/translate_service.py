@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 ZH_TO_EN_PROMPT = """Translate the following Chinese worship song lyrics into English.
 
 CRITICAL RULE: If this is a well-known classic hymn (经典诗歌/赞美诗), you MUST use the established, widely-sung English translation rather than creating a new one. For example:

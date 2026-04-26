@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2025 Leo Song
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useUILanguage, type UILanguage } from '../../hooks/useLanguage';
 

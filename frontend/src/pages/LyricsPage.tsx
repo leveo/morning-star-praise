@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2025 Leo Song
 import { useState } from 'react';
 import BackgroundPicker from '../components/ppt/BackgroundPicker';
 import FontSettings from '../components/ppt/FontSettings';

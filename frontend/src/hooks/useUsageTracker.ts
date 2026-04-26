@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2025 Leo Song
 import { useState, useEffect, useCallback } from 'react';
 import { createUsageSession, getUsage, type UsageSummary } from '../api/client';
 

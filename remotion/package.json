@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "My Remotion video",
   "repository": {},
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "dependencies": {
     "@remotion/cli": "4.0.448",

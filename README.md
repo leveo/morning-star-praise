@@ -240,7 +240,7 @@ Copy `backend/.env.example` → `backend/.env`.
 
 | Key | Required? | Purpose |
 |---|---|---|
-| `DATABASE_URL` | ✅ for Songs Library | `postgresql://user[:pass]@host:port/dbname` — e.g. `postgresql://leosong@127.0.0.1:5432/ppt_maker` |
+| `DATABASE_URL` | ✅ for Songs Library | `postgresql://user[:pass]@host:port/dbname` — e.g. `postgresql://user@127.0.0.1:5432/ppt_maker` |
 | `FRONTEND_URL` | — | CORS allowlist (default `http://localhost:5173`) |
 | `GCP_PROJECT_ID` | prod only | Google Secret Manager fallback (Cloud Run deploys read secrets from here) |
 | `PEXELS_API_KEY` | optional | Only used by the background-fetch scripts in `backend/scripts/` |
@@ -342,4 +342,14 @@ Browse other vision model options at [ollama.com/search?c=vision](https://ollama
 
 ## License
 
-MIT. See `LICENSE`.
+GNU General Public License v3.0 or later (GPL-3.0-or-later). See `LICENSE` for the full text.
+
+Copyright (C) 2025 Leo Song.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+details.

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 """Generate looping motion backgrounds from existing gradients via ffmpeg.
 
 Run from the backend dir:

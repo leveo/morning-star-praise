@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2025 Leo Song
 import { useUILanguage } from '../hooks/useLanguage';
 
 const BODY_ZH = [

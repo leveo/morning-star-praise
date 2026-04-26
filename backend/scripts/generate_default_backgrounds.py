@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025 Leo Song
 """Generate 25+ default static backgrounds (solid colors + gradients).
 
 Run from the backend dir:
