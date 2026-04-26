@@ -43,7 +43,7 @@ Every review must include a smoke test that actually exercises the changed capab
 - **Remotion composition change**: render a short (≤10s) MP4 via the CLI or open the composition in `@remotion/player` and scrub through several frames.
 - **Pipeline / alignment / transcription change**: run the change against at least one real sample (audio + lyrics pair) and verify the artifact (slide timings, stanza match, karaoke units) makes sense.
 - **Build / dependency change**: run the build from a cold `node_modules` or `.venv` to confirm it succeeds with no warnings added by the change.
-- **Docs change** (README / CLAUDE.md / REVIEW.md / ops runbooks): walk through the documented procedure end-to-end, tracing each referenced file path, command, and trigger phrase. Confirm the docs match current code / infrastructure — a rule that contradicts the codebase is worse than no rule.
+- **Docs change** (README / CLAUDE.md / CONTRIBUTING.md / REVIEW.md / ops runbooks): walk through the documented procedure end-to-end, tracing each referenced file path and command. Confirm the docs match current code / infrastructure — a rule that contradicts the codebase is worse than no rule.
 
 ### What does not qualify
 
@@ -68,8 +68,3 @@ If the change cannot be smoke-tested in the current environment — missing cred
 Any finding in §2 or a missing / insufficient smoke test in §3. A missing smoke test is a blocker on the same footing as a bug — the reviewer cannot verify the capability without it.
 
 Taste nits go in the review thread but are not blockers unless the reviewer marks them as such.
-
-## 5. Trigger phrase
-
-Saying **"code review"**, **"/code review"**, **"代码审查"**, or any obvious variant to Claude Code runs this entire procedure end to end — scope identification, a 3-lens pass (three parallel review agents for non-trivial code diffs; a single inline pass for docs-only or ≤2-file mechanical diffs), aggregation + fixes, mandatory smoke test, and a final commit with a `Smoke test:` section. See `CLAUDE.md` for the operational details.
-
