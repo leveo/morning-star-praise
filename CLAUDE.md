@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Architecture & development notes
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Internal notes on the codebase's trickier corners. Skim this before changing the Whisper alignment pipeline, the Remotion composition, the `/analyze` → `/create` → `/rerender` flow, or the LLM dispatch logic. New contributors: see [CONTRIBUTING.md](./CONTRIBUTING.md) for workflow; this file is for the *why* behind specific design choices.
 
 ## Commands
 
@@ -81,14 +81,14 @@ remotion/    Shared composition (imported by both CLI render AND @remotion/playe
 
 Backgrounds (~192 MB of bundled defaults) live in `backend/data/backgrounds/defaults/` and are committed to the repo because they're runtime assets the app ships with.
 
-## Trigger: "code review"
+## Smoke-testing changes
 
-When the user says **"code review"**, **"/code review"**, **"代码审查"**, or any obvious variant, run the full procedure defined in `REVIEW.md` — don't just read the diff and opine. The procedure is:
+Type checks and the test suite are supplements, not substitutes. Before submitting a change, exercise the affected capability end-to-end:
 
-1. Identify the scope — usually the diff since the last commit on `main`, or the files modified in the current session if there's no working-tree diff. Confirm the scope with the user only if ambiguous.
-2. Run the three review lenses (reuse / quality / efficiency) over the diff. For non-trivial code changes spanning multiple files, launch three review agents **in parallel** in a single message, one per lens, and pass each agent the full diff plus the file paths it should prioritize. For docs-only or tiny diffs (≤2 files, mechanical edits), collapse the three lenses into a single inline pass — the 3-agent overhead isn't justified.
-3. Aggregate findings. Fix R1/Q1/E1 items directly. Fix most R2/Q2/E2 items unless they'd balloon scope. Skip nits and note them.
-4. **Smoke test the changed capability.** This is mandatory, not optional. Per REVIEW.md §3: a type-check or test-suite pass is a supplement, not a substitute. Pick the most relevant smoke path (backend endpoint, frontend dev server + user flow, Remotion render, alignment pipeline sample, cold rebuild, or — for docs — walking through the documented procedure end-to-end) and actually exercise it. Report what was exercised, the input, and the observed output.
-5. Commit the fixes with a `Smoke test:` section in the message.
+- **Backend endpoint change** — call it via `curl` or the frontend; verify the response shape and side effects on disk
+- **Frontend UI change** — start the dev server (`npm run dev`) and click through the user flow in a real browser; check the network tab for unexpected calls
+- **Remotion composition change** — render a short MP4 via `/api/videos/create` (CLI path) **and** open the Edit Video panel (`@remotion/player` path) — both must work, since the same composition is used by both
+- **Whisper alignment change** — run an analysis on a sample MP3 with known repeated stanzas; confirm `plan.timed[*]` gets the right `lyric_index` and `start_sec`
+- **Docs-only change** — walk through the documented procedure on a clean machine (or a fresh checkout); fix what doesn't match reality
 
-This trigger is distinct from `/simplify` — simplify is a review-and-fix pass with no smoke-test requirement. "Code review" always ends with a smoke-test report.
+Report in the PR what you exercised, the input, and the observed output. "It compiles" is not a smoke test.
