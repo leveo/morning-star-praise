@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2025 Leo Song
+// Copyright (C) 2026 Leo Song
 import { createPersistedGlobalState } from './usePersistedGlobalState';
 
 /** User-editable defaults that seed every page's slide/font settings.

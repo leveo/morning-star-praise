@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2025 Leo Song
+# Copyright (C) 2026 Leo Song
 """Authentication via spiritual-growth-hub's Django auth tables."""
 
 from fastapi import Request, HTTPException

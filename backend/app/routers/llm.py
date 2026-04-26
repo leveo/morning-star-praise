@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2025 Leo Song
+# Copyright (C) 2026 Leo Song
 """GET /api/llm/status — tell the frontend which providers are configured.
 
 Returns per-provider ``configured`` flags so the Settings UI can gray out

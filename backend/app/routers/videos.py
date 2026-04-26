@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2025 Leo Song
+# Copyright (C) 2026 Leo Song
 """Worship video maker endpoints.
 
 POST /api/videos/extract-lyrics — upload .pptx / image / PDF, return lyrics text

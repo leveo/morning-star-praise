@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2025 Leo Song
+# Copyright (C) 2026 Leo Song
 """Sheet-music-to-PPT alignment.
 
 Phase 1: user uploads a sheet-music image or PDF; we detect staff systems,

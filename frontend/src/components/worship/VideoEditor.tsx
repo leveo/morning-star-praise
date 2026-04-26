@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2025 Leo Song
+// Copyright (C) 2026 Leo Song
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Player } from '@remotion/player';
 import { WorshipVideo, type WorshipVideoProps } from '@remotion-composition/WorshipVideo';

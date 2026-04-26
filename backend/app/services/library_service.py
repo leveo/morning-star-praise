@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2025 Leo Song
+# Copyright (C) 2026 Leo Song
 """Library / history — persistent record of every successful PPT or video render.
 
 Every successful /api/ppt/generate and /api/videos/create or /rerender call

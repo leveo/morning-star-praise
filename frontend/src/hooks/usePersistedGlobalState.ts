@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2025 Leo Song
+// Copyright (C) 2026 Leo Song
 import { useCallback, useEffect, useState } from 'react';
 
 /** Factory for a localStorage-backed value that stays in sync across all

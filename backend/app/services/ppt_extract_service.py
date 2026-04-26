@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2025 Leo Song
+# Copyright (C) 2026 Leo Song
 """Extract lyrics text and slide-background images from .pptx / .ppt files.
 
 Used by the worship-video maker to reuse text + visuals from an existing

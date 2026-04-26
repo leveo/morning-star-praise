@@ -340,11 +340,17 @@ Browse other vision model options at [ollama.com/search?c=vision](https://ollama
 
 ---
 
+## Contributing
+
+Pull requests, bug reports, and feature ideas are welcome. Please read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening a PR — it covers the dev workflow, code style, the bilingual UI-text rule, the SPDX header requirement, and how to extend the LLM provider list. For non-trivial changes, open an issue first to discuss the approach.
+
+---
+
 ## License
 
 GNU General Public License v3.0 or later (GPL-3.0-or-later). See `LICENSE` for the full text.
 
-Copyright (C) 2025 Leo Song.
+Copyright (C) 2026 Leo Song.
 
 This program is free software: you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
