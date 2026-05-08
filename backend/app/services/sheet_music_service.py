@@ -324,6 +324,112 @@ class OemerBackend:
         return boxes
 
 
+class CvStaffBackend:
+    """Fast staff detector for clean PDF/image screenshots.
+
+    This path does not run an OMR model. It raster-scans for long horizontal
+    staff lines, groups every five parallel lines into one visual row, and
+    returns those row bounds in source pixels. It is much more stable on clean
+    hymnal/lead-sheet PDFs where the staff lines are crisp and continuous.
+    """
+
+    def detect_staffs(self, image_paths: list[Path]) -> list[StaffBox]:
+        import cv2
+        import numpy as np
+
+        boxes: list[StaffBox] = []
+        for page_idx, img_path in enumerate(image_paths):
+            gray = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+            if gray is None:
+                continue
+            h, w = gray.shape
+
+            ink = cv2.threshold(gray, 220, 255, cv2.THRESH_BINARY_INV)[1]
+            kernel_len = max(80, w // 28)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_len, 1))
+            horizontal = cv2.morphologyEx(ink, cv2.MORPH_OPEN, kernel)
+            horizontal = cv2.dilate(
+                horizontal,
+                cv2.getStructuringElement(cv2.MORPH_RECT, (9, 1)),
+                iterations=1,
+            )
+
+            row_counts = (horizontal > 0).sum(axis=1)
+            rows = np.where(row_counts > w * 0.34)[0]
+            line_centers = _group_staff_line_rows(rows)
+            for lines in _group_staff_lines_into_rows(line_centers):
+                y_staff_top = int(round(lines[0]))
+                y_staff_bottom = int(round(lines[4]))
+                band = horizontal[
+                    max(0, y_staff_top - 8):min(h, y_staff_bottom + 9),
+                    :,
+                ]
+                xs = np.where((band > 0).any(axis=0))[0]
+                if len(xs):
+                    x_left = max(0, int(xs.min()) - 16)
+                    x_right = min(w, int(xs.max()) + 16)
+                else:
+                    x_left, x_right = 0, w
+                if y_staff_bottom - y_staff_top < 16:
+                    continue
+                boxes.append(StaffBox(
+                    page=page_idx,
+                    y_top=y_staff_top,
+                    y_bottom=y_staff_bottom,
+                    x_left=x_left,
+                    x_right=x_right,
+                ))
+        return boxes
+
+
+def _group_staff_line_rows(rows) -> list[float]:
+    """Collapse adjacent raster rows into one center y per staff line."""
+    if len(rows) == 0:
+        return []
+    centers: list[float] = []
+    start = prev = int(rows[0])
+    for raw_y in rows[1:]:
+        y = int(raw_y)
+        if y <= prev + 2:
+            prev = y
+        else:
+            if prev - start <= 8:
+                centers.append((start + prev) / 2)
+            start = prev = y
+    if prev - start <= 8:
+        centers.append((start + prev) / 2)
+    return sorted(centers)
+
+
+def _group_staff_lines_into_rows(line_centers: list[float]) -> list[list[float]]:
+    """Group close line centers into five-line staves."""
+    rows: list[list[float]] = []
+    current: list[float] = []
+    for y in line_centers:
+        if not current or y - current[-1] < 32:
+            current.append(y)
+        else:
+            row = _best_five_line_window(current)
+            if row is not None:
+                rows.append(row)
+            current = [y]
+    row = _best_five_line_window(current)
+    if row is not None:
+        rows.append(row)
+    return rows
+
+
+def _best_five_line_window(lines: list[float]) -> list[float] | None:
+    if len(lines) < 5:
+        return None
+    if len(lines) == 5:
+        return lines
+    return min(
+        (lines[i:i + 5] for i in range(len(lines) - 4)),
+        key=lambda window: window[-1] - window[0],
+    )
+
+
 def _group_staves_into_systems(staves: list) -> list[list]:
     """Cluster detected staff lines into visual systems by vertical proximity.
 
@@ -427,14 +533,14 @@ def _filter_and_sort_staffs(
 def split_across_chunks(
     staffs: list[StaffBox], num_chunks: int, image_widths: dict[int, int],
     *, ordered: list[StaffBox] | None = None, tight_crop: bool = False,
+    include_lyrics: bool = False,
 ) -> list[CropRegion]:
     """Equal-distribute detected staff systems across ``num_chunks`` slides.
 
-    ``tight_crop=True`` excludes the ~80px lyrics band typically printed
-    under the staff — use this in crop mode where the scan contains
-    printed lyrics we don't want bled into the slide (lyrics go in a
-    separate PPT text box). In rebuild mode the Verovio render has no
-    lyrics so the extra padding is harmless whitespace.
+    ``tight_crop=True`` excludes the lyrics band below the staff. Plain
+    screenshot mode can instead set ``include_lyrics=True`` so the crop
+    contains the original printed lyric text without needing a vision LLM
+    to locate it.
     """
     if num_chunks <= 0:
         return []
@@ -449,6 +555,31 @@ def split_across_chunks(
     # (the hymnal case — 3 systems containing 4 verses' worth of lyrics for
     # ~12 slides), loop: each chunk i shows the staff system at ``i % N``
     # so every slide has a sheet fragment instead of trailing empties.
+    ordered_by_page: dict[int, list[StaffBox]] = {}
+    for s in ordered:
+        ordered_by_page.setdefault(s.page, []).append(s)
+
+    def _staff_gap(s: StaffBox) -> float:
+        return max(1.0, (s.y_bottom - s.y_top) / 4)
+
+    def _top_pad(s: StaffBox) -> int:
+        if tight_crop or include_lyrics:
+            return int(max(24, _staff_gap(s) * 4.4))
+        return 24
+
+    def _bottom_pad(s: StaffBox) -> int:
+        if tight_crop:
+            return int(max(12, _staff_gap(s) * 1.55))
+        if include_lyrics:
+            return int(max(80, _staff_gap(s) * 8.5))
+        return 80
+
+    def _next_staff_on_page(page: int, y_after: int) -> StaffBox | None:
+        for candidate in ordered_by_page.get(page, []):
+            if candidate.y_top > y_after:
+                return candidate
+        return None
+
     def _to_region(group: list[StaffBox]) -> CropRegion | None:
         by_page: dict[int, list[StaffBox]] = {}
         for s in group:
@@ -463,8 +594,16 @@ def split_across_chunks(
                 # groups them as one system. Keeping only the topmost staff
                 # excludes the lyric band entirely from the crop.
                 page_staffs = [min(page_staffs, key=lambda s: s.y_top)]
-            y_top = max(0, min(s.y_top for s in page_staffs) - 24)
-            y_bottom = max(s.y_bottom for s in page_staffs) + (12 if tight_crop else 80)
+            top_staff = min(page_staffs, key=lambda s: s.y_top)
+            bottom_staff = max(page_staffs, key=lambda s: s.y_bottom)
+            y_top = max(0, min(s.y_top for s in page_staffs) - _top_pad(top_staff))
+            y_bottom = max(s.y_bottom + _bottom_pad(s) for s in page_staffs)
+            if include_lyrics:
+                next_staff = _next_staff_on_page(page, bottom_staff.y_top)
+                if next_staff is not None:
+                    # Stop before the next row's chord/measure-number band.
+                    y_bottom = min(y_bottom, next_staff.y_top - _top_pad(next_staff))
+                y_bottom = max(y_bottom, bottom_staff.y_bottom + _bottom_pad(bottom_staff) // 2)
             width = image_widths.get(page, page_staffs[0].x_right)
             out.append(CropRegion(
                 page=page,
@@ -697,12 +836,15 @@ def _detect_staffs_via_llm(image_path: Path, page_idx: int) -> list[StaffBox]:
 # 2-3 /analyze calls back-to-back (probe at num_chunks=1, full at final count,
 # mode toggle), and without caching each pays the full toll. Cleared on
 # backend restart — bounded by the upload sessions still on disk.
-_OMR_CACHE: dict[tuple[str, str], tuple[list[Path], list[StaffBox], dict[int, int], list[StaffBox]]] = {}
+_OMR_CACHE: dict[
+    tuple[str, str],
+    tuple[list[Path], list[StaffBox], dict[int, int], list[StaffBox], bool],
+] = {}
 
 
 def _cached_omr(
     upload_path: Path, mode: SheetMode,
-) -> tuple[list[Path], list[StaffBox], dict[int, int], list[StaffBox]]:
+) -> tuple[list[Path], list[StaffBox], dict[int, int], list[StaffBox], bool]:
     """Run the OMR pipeline once per (file, mode) and memoize the result."""
     from PIL import Image
 
@@ -727,20 +869,29 @@ def _cached_omr(
             widths[i] = im.size[0]
 
     # Backend selection:
-    #   rebuild (clean render ok) → CV blank-band on clean Verovio output
+    #   rebuild (clean render ok) → deterministic staff-line CV on clean output
+    #   crop                      → deterministic staff-line CV on source pixels
     #   crop_llm                  → vision LLM bounding-box detection
-    #   crop (or rebuild fallback)→ oemer's pixel detector on scan
+    #   rebuild fallback          → deterministic staff-line CV on source pixels
     if from_clean_render:
-        backend: OmrBackend = HomrBackend()
+        backend: OmrBackend = CvStaffBackend()
     elif mode == "crop_llm":
         backend = LLMBackend()
+    elif mode in {"crop", "rebuild"}:
+        backend = CvStaffBackend()
     else:
         backend = OemerBackend()
     staffs = backend.detect_staffs(pages)
+    if from_clean_render and not staffs:
+        logger.info("CV staff detector found no clean-render staves; falling back to blank-band segmentation")
+        staffs = HomrBackend().detect_staffs(pages)
+    elif mode in {"crop", "rebuild"} and not staffs:
+        logger.info("CV staff detector found no source staves; falling back to oemer")
+        staffs = OemerBackend().detect_staffs(pages)
     ordered = _filter_and_sort_staffs(staffs, widths)
 
-    _OMR_CACHE[key] = (pages, staffs, widths, ordered)
-    return pages, staffs, widths, ordered
+    _OMR_CACHE[key] = (pages, staffs, widths, ordered, from_clean_render)
+    return pages, staffs, widths, ordered, from_clean_render
 
 
 def analyze(
@@ -748,15 +899,17 @@ def analyze(
 ) -> tuple[list[Path], list[CropRegion], int]:
     """End-to-end: image/PDF → page images + per-chunk crop regions.
 
-    Two modes:
+    Modes:
       - ``rebuild`` (default, "扒谱"): homr → MusicXML → Verovio → clean PNG.
-        Crops are from the freshly rendered notation — no scan artefacts,
-        no printed lyrics bleeding in. OMR errors become visible on the
-        slide; see Sheet-music pipeline in README for the tradeoff.
-      - ``crop`` (literal "截图"): oemer → staff bounding boxes in original
-        image coordinates → crop the user's original scan pixels. Preserves
-        the source exactly (watermarks, printed lyrics and all); best when
-        the user cares more about pixel fidelity than clean typography.
+        Crops are located with deterministic staff-line CV on the freshly
+        rendered notation — no scan artefacts, no printed lyrics bleeding in.
+        If OMR fails, rebuild falls back to the original pixels and keeps the
+        printed lyric band under each staff row.
+      - ``crop`` (literal "截图"): deterministic staff-line CV → crop the
+        user's original scan pixels, including the printed lyric band under
+        each staff row. Falls back to oemer if CV finds no staves.
+      - ``crop_llm`` ("截图 (AI)"): active vision model locates tight music
+        bounds and excludes lyrics/chords/text.
 
     On rebuild-mode failure (homr not installed, Verovio crash, ...) we
     transparently fall back to crop mode using the original scan — the
@@ -764,12 +917,16 @@ def analyze(
 
     Returns ``(page_image_paths, regions, system_count)``.
     """
-    pages, staffs, widths, ordered = _cached_omr(upload_path, mode)
-    # Gemini was already asked to exclude lyrics; oemer's crop mode needs
-    # the bass-staff-drop heuristic. Both take the tight padding path.
+    pages, staffs, widths, ordered, from_clean_render = _cached_omr(upload_path, mode)
+    # AI crop is asked to exclude lyrics. Plain screenshot mode intentionally
+    # keeps the printed lyric band under each detected staff row. Rebuild mode
+    # keeps clean Verovio output tight, but if OMR failed and we fell back to
+    # source pixels, keep the printed lyrics there too.
+    include_lyrics = mode == "crop" or (mode == "rebuild" and not from_clean_render)
     regions = split_across_chunks(
         staffs, num_chunks, widths,
         ordered=ordered,
-        tight_crop=(mode in ("crop", "crop_llm")),
+        tight_crop=(mode == "crop_llm"),
+        include_lyrics=include_lyrics,
     )
     return pages, regions, len(ordered)

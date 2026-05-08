@@ -24,8 +24,8 @@ import type { SlideData } from '../types';
 import axios from 'axios';
 
 const SHEET_MODE_OPTIONS: { value: SheetMode; label: string; hint: string }[] = [
-  { value: 'rebuild',   label: '扒谱',      hint: 'homr → Verovio 干净排版（耗时最长，OMR 可能出错）' },
-  { value: 'crop',      label: '截图',      hint: '用 oemer 定位，直接切原图像素' },
+  { value: 'rebuild',   label: '扒谱',      hint: 'homr → Verovio 干净排版，本地横线检测裁切（耗时最长）' },
+  { value: 'crop',      label: '截图',      hint: '用本地横线检测定位，保留原图谱线和歌词' },
   { value: 'crop_llm',  label: '截图 (AI)', hint: '用当前选择的 vision LLM 定位，通常对复杂排版更准' },
 ];
 
