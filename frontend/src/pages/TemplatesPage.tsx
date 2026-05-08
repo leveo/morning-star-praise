@@ -48,7 +48,7 @@ const PROVIDER_MODEL_SUGGESTIONS: {
   },
   openai: {
     text: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
-    vision: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+    vision: ['gpt-image-2-2026-04-21', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
   },
   anthropic: {
     text: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'],
