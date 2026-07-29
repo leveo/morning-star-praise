@@ -122,8 +122,12 @@ class VideoJobResponse(BaseModel):
 
 class AnalyzedSlide(BaseModel):
     text: str
+    # Backward-compatible aliases for the display window.
     start_sec: float
     end_sec: float
+    sung_start_sec: float
+    sung_end_sec: float
+    lead_sec: float
     stanza_idx: int
 
 
@@ -168,6 +172,7 @@ class JobSpec:
     secondary_font_size: int | None
     line_spacing_multiplier: float | None
     show_page_numbers: bool
+    background_motion: bool
     padding_style: str = "dark"
     bg_path_overrides: dict[int, Path] | None = None
     # Renderer cycles these crops when fewer than chunks. None disables.
@@ -215,6 +220,20 @@ def _load_cached_plan(analysis_id: str) -> CachedAnalysis:
         audio_filename=payload.get("audio_filename") or audio_name,
         work_dir=d,
     )
+
+
+def _save_cached_plan(cached: CachedAnalysis) -> None:
+    """Persist editor timing changes without discarding cache metadata."""
+    plan_path = cached.work_dir / "plan.json"
+    try:
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+        payload["plan"] = video_service.plan_to_dict(cached.plan)
+        plan_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not save timing changes: {exc}")
 
 
 def _progress_cb(job_id: str):
@@ -269,6 +288,7 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             show_page_numbers=spec.show_page_numbers,
             padding_style=spec.padding_style,
             sheet_crop_paths=spec.sheet_crop_paths,
+            background_motion=spec.background_motion,
         )
 
         video_job_service.update_job(
@@ -347,6 +367,13 @@ def _analyze_sync(
                 text=tc.text,
                 start_sec=float(tc.start),
                 end_sec=float(tc.end),
+                sung_start_sec=float(
+                    tc.sung_start if tc.sung_start is not None else tc.start
+                ),
+                sung_end_sec=float(
+                    tc.sung_end if tc.sung_end is not None else tc.end
+                ),
+                lead_sec=float(tc.lead),
                 stanza_idx=int(stanza_idx_by_chunk[i]) if i < len(stanza_idx_by_chunk) else -1,
             )
         )
@@ -441,6 +468,7 @@ async def create_video(
     secondary_font_size: int | None = Form(None),
     line_spacing_multiplier: float | None = Form(None),
     show_page_numbers: bool = Form(False),
+    background_motion: bool = Form(False),
     padding_style: str = Form("dark"),
     input_snapshot: str = Form(""),
     sheet_session_id: str = Form(""),
@@ -497,6 +525,7 @@ async def create_video(
         secondary_font_size=secondary_font_size,
         line_spacing_multiplier=line_spacing_multiplier,
         show_page_numbers=show_page_numbers,
+        background_motion=background_motion,
         padding_style=padding_style if padding_style in ("dark", "light") else "dark",
         sheet_crop_paths=sheet_crop_paths,
         analysis_id=analysis_id,
@@ -650,8 +679,11 @@ def get_analysis_audio(analysis_id: str):
 
 class TimingOverride(BaseModel):
     idx: int
-    start_sec: float
-    end_sec: float
+    # New clients edit the actual sung cue. start/end remain accepted for
+    # cached clients that used the old display-window editor.
+    sung_start_sec: float | None = None
+    start_sec: float | None = None
+    end_sec: float | None = None
 
 
 class BackgroundOverride(BaseModel):
@@ -670,6 +702,7 @@ class RerenderRequest(BaseModel):
     secondary_font_size: int | None = None
     line_spacing_multiplier: float | None = None
     show_page_numbers: bool = False
+    background_motion: bool = False
     padding_style: PaddingStyle = "dark"
     timing_overrides: list[TimingOverride] = []
     background_overrides: list[BackgroundOverride] = []
@@ -683,21 +716,15 @@ async def rerender_video(req: RerenderRequest):
     cached = _load_cached_plan(req.analysis_id)
 
     if req.timing_overrides:
-        timed = list(cached.plan.timed)
+        sung_overrides: dict[int, float] = {}
         for ov in req.timing_overrides:
-            if 0 <= ov.idx < len(timed):
-                timed[ov.idx] = video_service.TimedChunk(
-                    text=timed[ov.idx].text,
-                    start=float(ov.start_sec),
-                    end=float(ov.end_sec),
-                )
-        # Re-enforce the chunk[i].end == chunk[i+1].start invariant so
-        # Remotion sequences still crossfade back-to-back.
-        for i in range(len(timed) - 1):
-            timed[i].end = timed[i + 1].start
-        cached.plan.timed = timed
-        # Overrides moved chunk windows — cached units are stale, force recompute.
-        cached.plan.karaoke_units = []
+            requested = ov.sung_start_sec
+            if requested is None:
+                requested = ov.start_sec
+            if requested is not None:
+                sung_overrides[ov.idx] = float(requested)
+        video_service.apply_sung_start_overrides(cached.plan, sung_overrides)
+        _save_cached_plan(cached)
 
     extracted_bg_paths: list[Path] | None = None
     if req.extracted_background_paths:
@@ -743,6 +770,7 @@ async def rerender_video(req: RerenderRequest):
         secondary_font_size=req.secondary_font_size,
         line_spacing_multiplier=req.line_spacing_multiplier,
         show_page_numbers=req.show_page_numbers,
+        background_motion=req.background_motion,
         padding_style=req.padding_style,
         sheet_crop_paths=sheet_crop_paths,
         bg_path_overrides=bg_path_overrides,

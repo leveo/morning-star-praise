@@ -108,16 +108,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Database not available, running without persistence: {e}")
 
-    # Eager-load the English wav2vec2 alignment model so the first /analyze
-    # request doesn't pay the ~15-30s cold-load cost. Chinese is intentionally
-    # lazy — the model is ~1GB and not every install will want it.
-    try:
-        from app.services.video_service import preload_align_model
-        import threading as _t
-        _t.Thread(target=preload_align_model, args=("en",), daemon=True).start()
-    except Exception as e:
-        logger.warning("wav2vec2 preload failed: %s", e)
-
     yield
 
 

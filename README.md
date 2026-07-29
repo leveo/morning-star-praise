@@ -13,7 +13,7 @@ Worship teams and church media volunteers who currently spend hours every week h
 - **"I have lyrics in a text file / Word doc — I just want a PPT with our backgrounds and fonts."** Paste the lyrics, pick backgrounds, download a finished `.pptx`.
 - **"Someone sent me a YouTube link of the song we want to sing — now I have to transcribe it."** Paste the URL; the app pulls captions (or runs OCR on frames if there are none) and produces the slides.
 - **"We have a printed sheet-music score and want each slide to show the music + lyrics."** Upload the sheet image or PDF; the app auto-segments staff systems, crops per-slide fragments, and pairs each fragment with a lyrics box.
-- **"We have an MP3 of the song and want a karaoke / worship video to project."** Upload the MP3 + lyrics; the app aligns lyrics to the audio (handles repeated choruses) and renders an MP4 with slides that change exactly when each line is sung — including per-character karaoke highlight.
+- **"We have an MP3 of the song and want a karaoke / worship video to project."** Upload the MP3 + confirmed lyrics; the app aligns them to the audio, opens a pre-render timing preview, and renders a 1080p MP4 plus SRT — including optional per-character karaoke highlight.
 - **"Our songs are bilingual (Chinese + English) and translating + formatting them is painful."** Translation runs through your chosen LLM; both languages render side-by-side on the same slide.
 - **"We can't / won't send our church's data to a cloud LLM."** Run in pure-local mode — `faster-whisper` for audio + Ollama for OCR / translation, fully offline.
 
@@ -25,9 +25,11 @@ Worship teams and church media volunteers who currently spend hours every week h
 
 - **Lyric → PPT** — Paste text, a YouTube URL, a `.pptx`, a PDF, or an image; get a finished `.pptx` with your background pool, fonts, and optional bilingual translation.
 - **Sheet-music → PPT** (Phase 1) — Optionally upload a printed sheet-music image or PDF on the Lyrics page; `oemer` detects staff systems, the app crops the original scan into per-slide fragments, and each slide shows the sheet fragment on top with a draggable lyrics textbox below (white backdrop). No re-rendering — the pixels are always your upload. Handwritten sheets may misdetect.
-- **Worship video** — Upload MP3 + lyrics; render an MP4 whose slide transitions lock to the moment each line is sung. Repeated verses/choruses expand automatically when the audio order differs from the written lyrics.
+- **Worship video** — Upload MP3 + confirmed lyrics; align the supplied slides to the performance and render a 1920×1080 MP4 plus SRT. This workflow deliberately does not treat the audio transcription as the source of truth for the lyrics.
 - **Karaoke mode** — Per-character (CJK) or per-word (Latin) highlight that lights up with the vocal.
-- **Edit video** — After a render, open the MP4 in an embedded `@remotion/player`, nudge slide timings / swap backgrounds, and re-render from the cached plan without re-transcribing.
+- **Pre-render calibration** — Before the first render, open the composition in an embedded `@remotion/player`, jump to each page, nudge its sung cue by 0.1 seconds or set it to the current playhead, swap individual backgrounds, and render without re-transcribing. Saved cue changes remain attached to the cached analysis.
+- **Early lyric display** — A lyric page is fully visible 0.5 seconds before its sung cue. After an instrumental gap longer than 8 seconds, the next page appears 5 seconds early. The first lyric page always uses the normal 0.5-second lead.
+- **Subtle background motion** — Static images can use an optional slow zoom; bundled video backgrounds continue to play as motion loops.
 - **Songs Library** — Every PPT and video render is saved with a resumable snapshot. Return later to re-download or restore the form state and keep editing.
 - **Settings page** — One place to edit the default template (max lines, font sizes, line spacing, page numbers) and pick which LLM powers OCR / translation / YouTube-frame analysis. Toggle between *API mode* (cloud providers) and *Local mode* (Ollama) without restarting the backend.
 - **Background library** — 84 bundled backgrounds (gradients, radial glows, landscape motion loops) plus user uploads, with a tag-filterable picker and lazy-paused autoplay so 30+ video tiles don't saturate the decoder.
@@ -47,7 +49,7 @@ Set `LLM_TEXT_PROVIDER=""` and `LLM_VISION_PROVIDER=""`. Everything that doesn't
 | Feature | Pure-local | LLM-powered |
 |---|---|---|
 | Lyric → PPT (text paste, already-extracted lyrics) | ✅ | ✅ |
-| Worship video (MP3 + lyrics paste) | ✅ (`faster-whisper` + `wav2vec2` run on your machine) | ✅ |
+| Worship video (MP3 + confirmed lyrics) | ✅ (`faster-whisper` runs on your machine) | ✅ |
 | Karaoke highlight | ✅ | ✅ |
 | Songs Library / Settings / Edit Video | ✅ | ✅ |
 | Background library + uploads | ✅ | ✅ |
@@ -101,7 +103,7 @@ The selection is persisted in the browser's `localStorage` and travels to the ba
 
 | Layer       | Tech |
 |---|---|
-| Backend     | FastAPI · `faster-whisper` (large-v3) · `python-pptx` · `yt-dlp` · pluggable LLMs |
+| Backend     | FastAPI · `faster-whisper` (configurable, `medium` default) · `python-pptx` · `yt-dlp` · pluggable LLMs |
 | Frontend    | React 19 · Vite · TypeScript · Tailwind v4 · `@remotion/player` |
 | Composition | Remotion 4.0 (one React composition shared between CLI renderer and in-browser player) |
 | Storage     | Filesystem for analyses + renders · PostgreSQL for Songs Library · browser `localStorage` for Settings (default template + LLM routing) |
@@ -139,7 +141,8 @@ The selection is persisted in the browser's `localStorage` and travels to the ba
 - **Node.js 20+** (for frontend + Remotion)
 - **PostgreSQL 14+** (required for Songs Library; skip if you don't need history)
 - **ffmpeg** (required by `yt-dlp` and audio decode) — `brew install ffmpeg` / `apt-get install ffmpeg`
-- **~4 GB disk** for the first `/api/videos/analyze` run — `faster-whisper large-v3` downloads once into the HuggingFace cache.
+- **Chrome or Chromium** for Remotion rendering. On macOS, the backend automatically uses Google Chrome from `/Applications`; otherwise set `REMOTION_BROWSER_EXECUTABLE` in `backend/.env`.
+- **~1.5 GB disk** for the first `/api/videos/analyze` run — the default `faster-whisper medium` model downloads once into the HuggingFace cache. Set `WHISPER_MODEL` in `backend/.env` to choose another model.
 - **poppler** (only if you want to upload PDF sheet music) — `brew install poppler` / `apt-get install poppler-utils`. Used by `pdf2image` to rasterize PDFs before OMR.
 - **homr + Python 3.11 + Poetry** for the sheet-music-on-PPT feature — see Setup § 3.5. First homr run downloads ~300 MB of transformer models into its venv.
 - **~200 MB** extra for `oemer` (fallback OMR) — downloads 4 ONNX/H5 weight files into `site-packages/oemer/checkpoints/` on first use. Prefetch to avoid a request-time stall:
@@ -338,11 +341,13 @@ Browse other vision model options at [ollama.com/search?c=vision](https://ollama
 
 ## How the alignment pipeline works
 
-1. `faster-whisper` transcribes the MP3 with word-level timestamps (VAD off — music confuses the VAD).
+1. `faster-whisper` transcribes the MP3 with word-level timestamps for alignment only (VAD off — music confuses the VAD). The user-supplied lyrics remain the source text shown in the video.
 2. Transcript text and user lyrics are normalized and fed to a char-level `SequenceMatcher`.
 3. The matching opcodes turn into a `_CharTimeCurve`, answering "at what second does user-char *i* get sung?" for any position.
 4. Stanza occurrences in the audio are identified via a greedy char-window match, so a song written as `V/C` but sung `V/C/V/C` expands automatically.
-5. The curve + occurrence list becomes an `AudioPlan`, cached on disk under `backend/data/video_work/analyses/<id>/` so `/create` and `/rerender` share the same alignment without re-transcribing. Karaoke units are precomputed during `/analyze` and persisted too, so the editor preview and the final render never rebuild the O(n²) alignment.
+5. The curve + occurrence list becomes an `AudioPlan`, cached on disk under `backend/data/video_work/analyses/<id>/` so `/create` and `/rerender` share the same alignment without re-transcribing.
+6. The calibration preview edits each page's actual sung cue. Display cues are then derived automatically: normally 0.5 seconds early, or 5 seconds early after an instrumental gap longer than 8 seconds.
+7. Karaoke units are computed from the sung window, while SRT timestamps use the sung cue rather than the earlier visual display cue.
 
 ---
 

@@ -79,6 +79,7 @@ export const worshipVideoSchema = z.object({
   secondaryFontSizePt: z.number().nullable().optional(),
   lineSpacingMultiplier: z.number().nullable().optional(),
   showPageNumbers: z.boolean().optional(),
+  backgroundMotion: z.boolean().optional(),
   // 'dark' = black semi-transparent overlay + white text (default);
   // 'light' = white semi-transparent overlay + black text.
   paddingStyle: z.enum(["dark", "light"]).optional(),
@@ -117,6 +118,7 @@ type SlideProps = {
   /** Total content pages for the "N / total" badge. */
   totalPages?: number;
   paddingStyle?: PaddingStyle;
+  backgroundMotion?: boolean;
 };
 
 // PPT-reference slide is 540pt tall; our Remotion canvas is 1080px tall.
@@ -224,6 +226,7 @@ const Slide: React.FC<SlideProps> = ({
   pageNumber = 0,
   totalPages = 0,
   paddingStyle = "dark",
+  backgroundMotion = false,
 }) => {
   const {
     overlayBg,
@@ -277,6 +280,21 @@ const Slide: React.FC<SlideProps> = ({
     height: "100%",
     objectFit: "cover",
   };
+  const motionStyle: React.CSSProperties =
+    backgroundMotion && !bgIsVideo
+      ? {
+          transform: `scale(${interpolate(
+            frame,
+            [0, fps * 20],
+            [1, 1.035],
+            {
+              extrapolateLeft: "clamp",
+              extrapolateRight: "clamp",
+            },
+          )})`,
+          transformOrigin: "center center",
+        }
+      : {};
 
   return (
     <AbsoluteFill style={{ opacity }}>
@@ -284,7 +302,10 @@ const Slide: React.FC<SlideProps> = ({
         bgIsVideo ? (
           <Video src={resolveAssetUrl(backgroundSrc)} loop muted style={coverStyle} />
         ) : (
-          <Img src={resolveAssetUrl(backgroundSrc)} style={coverStyle} />
+          <Img
+            src={resolveAssetUrl(backgroundSrc)}
+            style={{ ...coverStyle, ...motionStyle }}
+          />
         )
       ) : (
         <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }} />
@@ -401,6 +422,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
   lineSpacingMultiplier,
   showPageNumbers = false,
   paddingStyle = "dark",
+  backgroundMotion = false,
 }) => {
   const { fps } = useVideoConfig();
   const fadeFrames = Math.max(1, Math.round(fps * 0.4));
@@ -412,7 +434,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
       <Audio src={resolveAssetUrl(audioSrc)} />
 
       {/* Title slide */}
-      <Sequence from={0} durationInFrames={introFrames} premountFor={fps}>
+      <Sequence durationInFrames={introFrames} premountFor={fps}>
         <Slide
           text={title}
           backgroundSrc={titleBackgroundSrc}
@@ -423,6 +445,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
           secondaryFontSizePt={secondaryFontSizePt}
           lineSpacingMultiplier={lineSpacingMultiplier}
           paddingStyle={paddingStyle}
+          backgroundMotion={backgroundMotion}
         />
       </Sequence>
 
@@ -454,6 +477,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
               pageNumber={showPageNumbers ? i + 1 : 0}
               totalPages={showPageNumbers ? chunks.length : 0}
               paddingStyle={paddingStyle}
+              backgroundMotion={backgroundMotion}
             />
           </Sequence>
         );

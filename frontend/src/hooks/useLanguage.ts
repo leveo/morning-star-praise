@@ -486,7 +486,7 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
     worshipVideo: {
       title: '敬拜视频生成',
       subtitle:
-        '上传 MP3 与歌词（可粘贴、.pptx 或乐谱图片）。系统用 Whisper large-v3 将歌词对齐到音频，然后渲染一个 1920×1080 的 MP4，并附带独立的 SRT 字幕文件。',
+        '上传音频与已确认歌词（可粘贴、.pptx 或乐谱图片）。系统会按实际演唱顺序对齐歌词，允许渲染前逐页校准，再生成 1920×1080 MP4 和 SRT。',
       backgrounds: '背景',
       analyzedSlidesHeading: (n) => `${n} 张 slide · 按音频顺序`,
       videoReady: '视频已就绪',
@@ -536,7 +536,7 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       generateVideo: '生成视频',
       analyzeToEnable: '请先在上方分析音频',
       firstRunHint:
-        '首次运行会下载 Whisper large-v3 模型（约 3 GB），可能需要几分钟。',
+        '首次运行会下载本地 Whisper medium 模型。分析完成后会释放模型内存，再开始生成视频。',
       downloadMp4: '下载 MP4',
       downloadSrt: '下载 SRT',
       editVideo: '编辑视频',
@@ -762,7 +762,7 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
     worshipVideo: {
       title: 'Worship Video Maker',
       subtitle:
-        'Upload an MP3 plus the lyrics (paste, .pptx, or sheet music image). Whisper large-v3 aligns them to the audio, then a 1920x1080 MP4 is rendered with full-screen captions (plus a separate SRT file).',
+        'Upload audio plus confirmed lyrics. The app aligns the sung order, lets you calibrate every slide before rendering, then creates a 1920x1080 MP4 and SRT.',
       backgrounds: 'Backgrounds',
       analyzedSlidesHeading: (n) => `${n} slides · audio order`,
       videoReady: 'Video ready',
@@ -815,7 +815,7 @@ export const UI_TEXT: Record<UILanguage, TextDict> = {
       generateVideo: 'Generate Video',
       analyzeToEnable: 'Analyze audio above to enable Generate',
       firstRunHint:
-        'First run downloads the Whisper large-v3 model (~3 GB) — this can take several minutes.',
+        'The first run downloads the local Whisper medium model. Its memory is released before video rendering starts.',
       downloadMp4: 'Download MP4',
       downloadSrt: 'Download SRT',
       editVideo: 'Edit Video',

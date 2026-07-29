@@ -32,11 +32,16 @@ class Settings:
     MAX_UPLOAD_SIZE_MB = 10
     MAX_AUDIO_UPLOAD_SIZE_MB = 50  # MP3s can be larger than images
 
-    # Video generation — rendered via Remotion
-    WHISPER_MODEL = "large-v3"
-    WHISPER_COMPUTE_TYPE = "int8"  # CPU-friendly quantization
+    # Video generation — rendered via Remotion. ``medium`` keeps local
+    # Mandarin transcription useful without crowding a 16 GB laptop during
+    # the subsequent Remotion render.
+    WHISPER_MODEL = get_secret("WHISPER_MODEL", "medium")
+    WHISPER_COMPUTE_TYPE = get_secret("WHISPER_COMPUTE_TYPE", "int8")
+    WHISPER_CPU_THREADS = int(get_secret("WHISPER_CPU_THREADS", "4"))
+    WHISPER_NUM_WORKERS = int(get_secret("WHISPER_NUM_WORKERS", "1"))
     REMOTION_PROJECT_DIR = BASE_DIR.parent / "remotion"
     REMOTION_RENDER_TIMEOUT_SEC = 1800
+    REMOTION_BROWSER_EXECUTABLE = get_secret("REMOTION_BROWSER_EXECUTABLE", "")
 
     # File cleanup
     OUTPUT_CLEANUP_HOURS = 1

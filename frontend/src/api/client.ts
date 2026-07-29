@@ -335,6 +335,9 @@ export interface AnalyzedSlide {
   text: string;
   start_sec: number;
   end_sec: number;
+  sung_start_sec: number;
+  sung_end_sec: number;
+  lead_sec: number;
   stanza_idx: number;
 }
 
@@ -370,6 +373,9 @@ export interface WorshipPlanResponse {
       text: string;
       start: number;
       end: number;
+      sung_start: number;
+      sung_end: number;
+      lead: number;
       units?: { text: string; startSec: number | null; isLineBreak: boolean }[];
     }[];
   };
@@ -395,9 +401,11 @@ export interface RerenderRequest {
   secondaryFontSize?: number;
   lineSpacingMultiplier?: number;
   showPageNumbers?: boolean;
+  backgroundMotion?: boolean;
   paddingStyle?: 'dark' | 'light';
-  timingOverrides?: { idx: number; start_sec: number; end_sec: number }[];
+  timingOverrides?: { idx: number; sung_start_sec: number }[];
   backgroundOverrides?: { idx: number; background_id?: number }[];
+  sheet?: { sessionId: string; cropFilenames: string[] };
   inputSnapshot?: Record<string, unknown>;
 }
 
@@ -415,9 +423,12 @@ export async function rerenderWorshipVideo(
     secondary_font_size: req.secondaryFontSize,
     line_spacing_multiplier: req.lineSpacingMultiplier,
     show_page_numbers: req.showPageNumbers ?? false,
+    background_motion: req.backgroundMotion ?? false,
     padding_style: req.paddingStyle ?? 'dark',
     timing_overrides: req.timingOverrides ?? [],
     background_overrides: req.backgroundOverrides ?? [],
+    sheet_session_id: req.sheet?.sessionId,
+    sheet_crop_filenames: req.sheet?.cropFilenames,
     input_snapshot: req.inputSnapshot,
   });
   return data;
@@ -456,6 +467,7 @@ export async function createWorshipVideo(
   secondaryFontSize?: number,
   lineSpacingMultiplier?: number,
   showPageNumbers: boolean = false,
+  backgroundMotion: boolean = false,
   inputSnapshot?: Record<string, unknown>,
   paddingStyle: 'dark' | 'light' = 'dark',
   sheet?: { sessionId: string; cropFilenames: string[] },
@@ -487,6 +499,9 @@ export async function createWorshipVideo(
   }
   if (showPageNumbers) {
     formData.append('show_page_numbers', 'true');
+  }
+  if (backgroundMotion) {
+    formData.append('background_motion', 'true');
   }
   formData.append('padding_style', paddingStyle);
   if (inputSnapshot) {

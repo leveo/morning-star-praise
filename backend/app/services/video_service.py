@@ -16,6 +16,7 @@ place to tweak layout, fonts, animations, and transitions.
 """
 
 import json
+import gc
 import logging
 import re
 import shutil
@@ -33,18 +34,30 @@ from app.services.chinese_service import is_cjk_char
 
 logger = logging.getLogger(__name__)
 
-# Lazily-loaded Whisper model (large-v3 = ~3GB RAM + ~3GB disk first time).
-# Under concurrent /analyze requests on a cold process the double-checked
-# load has to be serialized — otherwise two workers race the 3GB download.
+# Lazily loaded for one analysis at a time, then released before Chromium
+# starts rendering. This prevents Whisper and Remotion from competing for
+# memory on laptops.
 _whisper_model = None
 _whisper_model_lock = threading.Lock()
+_whisper_inference_lock = threading.Lock()
+
+DEFAULT_LYRIC_LEAD_SEC = 0.5
+LONG_INSTRUMENTAL_THRESHOLD_SEC = 8.0
+LONG_INSTRUMENTAL_LEAD_SEC = 5.0
 
 
 @dataclass
 class TimedChunk:
     text: str
+    # ``start`` / ``end`` are display boundaries. The incoming slide reaches
+    # full opacity at ``start`` and remains until ``end``.
     start: float
     end: float
+    # Sung boundaries drive SRT and karaoke. They deliberately remain
+    # separate from the congregation-friendly early display cue.
+    sung_start: float | None = None
+    sung_end: float | None = None
+    lead: float = DEFAULT_LYRIC_LEAD_SEC
 
 
 @dataclass
@@ -74,181 +87,22 @@ def _get_whisper_model():
                 settings.WHISPER_MODEL,
                 device="cpu",
                 compute_type=settings.WHISPER_COMPUTE_TYPE,
+                cpu_threads=settings.WHISPER_CPU_THREADS,
+                num_workers=settings.WHISPER_NUM_WORKERS,
             )
     return _whisper_model
 
 
+def _release_whisper_model() -> None:
+    """Release model memory before the browser-based video render starts."""
+    global _whisper_model
+    with _whisper_model_lock:
+        _whisper_model = None
+    gc.collect()
+
+
 _MAX_PROMPT_CHARS = 448  # whisper's prompt context is ~224 tokens ≈ this many chars
 _MAX_CONSECUTIVE_REPEAT = 3  # drop a word/char that repeats as the 4th+ in a run
-
-_ALIGN_SUPPORTED_LANGS = {"en", "zh"}  # languages we have wav2vec2 models for
-_align_model_cache: dict[str, tuple[object, object] | tuple[None, None]] = {}
-_align_model_lock = threading.Lock()
-
-
-def _get_align_model(language_code: str):
-    """Lazily load (and cache) a whisperx wav2vec2 alignment model.
-
-    Returns ``(model, metadata)`` or ``(None, None)`` if unavailable. The
-    result is cached per-language so repeat calls are free; concurrent
-    callers are serialized to avoid double-loading the same model.
-    """
-    if language_code not in _ALIGN_SUPPORTED_LANGS:
-        return (None, None)
-    with _align_model_lock:
-        cached = _align_model_cache.get(language_code)
-        if cached is not None:
-            return cached
-        try:
-            import whisperx
-
-            logger.info("Loading wav2vec2 alignment model for %s", language_code)
-            model, metadata = whisperx.load_align_model(
-                language_code=language_code, device="cpu"
-            )
-            _align_model_cache[language_code] = (model, metadata)
-            return (model, metadata)
-        except Exception as exc:
-            logger.warning("Failed to load wav2vec2 align model for %s: %s",
-                           language_code, exc)
-            _align_model_cache[language_code] = (None, None)
-            return (None, None)
-
-
-def preload_align_model(language_code: str = "en") -> bool:
-    """Eagerly load an alignment model so the first request doesn't pay for it."""
-    model, _ = _get_align_model(language_code)
-    return model is not None
-
-
-def _group_words_into_segments(
-    words: list[WhisperWord], max_gap: float = 3.0
-) -> list[dict]:
-    """Break a flat word list into contiguous segments separated by silence.
-
-    Used to feed whisperx.align with short chunks instead of one giant
-    transcript — matches how whisperx was designed to be called and makes
-    its char-level CTC alignment more stable.
-    """
-    segments: list[dict] = []
-    current_words: list[WhisperWord] = []
-    current_start: float | None = None
-    for w in words:
-        if current_start is None:
-            current_start = w.start
-            current_words = [w]
-            continue
-        if w.start - current_words[-1].end > max_gap:
-            segments.append(
-                {
-                    "text": " ".join(cw.text for cw in current_words),
-                    "start": float(current_start),
-                    "end": float(current_words[-1].end),
-                }
-            )
-            current_start = w.start
-            current_words = [w]
-        else:
-            current_words.append(w)
-    if current_words and current_start is not None:
-        segments.append(
-            {
-                "text": " ".join(cw.text for cw in current_words),
-                "start": float(current_start),
-                "end": float(current_words[-1].end),
-            }
-        )
-    return segments
-
-
-def _refine_with_whisperx(
-    audio_path: Path,
-    raw_words: list[WhisperWord],
-    language_code: str,
-) -> list[WhisperWord] | None:
-    """Forced-align ``raw_words``' text to the audio via wav2vec2.
-
-    Returns a new list of ``WhisperWord`` with CTC-refined timestamps, or
-    ``None`` if alignment is unavailable, fails, or looks degenerate (e.g.
-    the Chinese wav2vec2 model sometimes collapses sung vowels into
-    ~20ms windows, which is worse than the original whisper timestamps).
-    """
-    if not raw_words or language_code not in _ALIGN_SUPPORTED_LANGS:
-        return None
-
-    align_model, align_metadata = _get_align_model(language_code)
-    if align_model is None or align_metadata is None:
-        return None
-
-    try:
-        import numpy as np
-        import soundfile as sf
-        import whisperx
-    except ImportError:
-        return None
-
-    try:
-        audio, sr = sf.read(str(audio_path), dtype="float32")
-    except Exception as exc:
-        logger.warning("whisperx refine: failed to load audio: %s", exc)
-        return None
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
-    if sr != 16000:
-        try:
-            from scipy.signal import resample_poly
-
-            audio = resample_poly(audio, 16000, sr).astype("float32")
-        except Exception as exc:
-            logger.warning("whisperx refine: resample failed: %s", exc)
-            return None
-
-    segments = _group_words_into_segments(raw_words)
-    if not segments:
-        return None
-
-    try:
-        result = whisperx.align(
-            segments, align_model, align_metadata, audio, "cpu",
-            return_char_alignments=False,
-            print_progress=False,
-        )
-    except Exception as exc:
-        logger.warning("whisperx refine: align failed: %s", exc)
-        return None
-
-    refined: list[WhisperWord] = []
-    for seg in result.get("segments", []):
-        for w in seg.get("words", []):
-            start = w.get("start")
-            end = w.get("end")
-            if start is None or end is None:
-                continue
-            text = (w.get("word") or "").strip()
-            if not text:
-                continue
-            refined.append(
-                WhisperWord(text=text, start=float(start), end=float(end))
-            )
-
-    if not refined:
-        logger.warning("whisperx refine: produced 0 words, falling back")
-        return None
-
-    # Quality gate: wav2vec2 models for Chinese sung audio sometimes
-    # collapse every character into a ~20ms window. If more than half
-    # the refined words are that short, the model has failed — keep the
-    # original faster-whisper timestamps instead.
-    very_short = sum(1 for w in refined if (w.end - w.start) < 0.02)
-    if very_short > len(refined) * 0.5:
-        logger.warning(
-            "whisperx refine: %d/%d words <20ms, discarding as collapsed",
-            very_short, len(refined),
-        )
-        return None
-
-    logger.info("whisperx refine: %d → %d words", len(raw_words), len(refined))
-    return refined
 
 
 def _cap_word_durations(words: list[WhisperWord]) -> list[WhisperWord]:
@@ -313,13 +167,6 @@ def transcribe_audio(
         decoding toward the real words and is one of the most effective
         ways to prevent repeat-loop hallucinations on sung audio.
     """
-    if on_progress:
-        on_progress("Loading Whisper model (first run downloads ~3GB)", 10)
-    model = _get_whisper_model()
-
-    if on_progress:
-        on_progress("Transcribing audio", 25)
-
     lang = None if language in (None, "", "auto") else language
     # Whisper's prompt has a fixed ~224-token budget; truncate the tail
     # instead of the head so the first lines of a song (usually the ones
@@ -341,44 +188,54 @@ def transcribe_audio(
     #   - tighter compression_ratio / log_prob thresholds to auto-reject
     #     segments whose output looks like a degenerate loop
     #   - a post-hoc ``_strip_hallucinated_repeats`` pass as a safety net
-    #   - optional whisperx wav2vec2 forced alignment to refine word
-    #     timestamps (see ``_refine_with_whisperx``)
-    segments, info = model.transcribe(
-        str(audio_path),
-        language=lang,
-        word_timestamps=True,
-        vad_filter=False,
-        beam_size=10,
-        initial_prompt=prompt,
-        condition_on_previous_text=False,
-        compression_ratio_threshold=2.0,
-        log_prob_threshold=-0.8,
-        no_speech_threshold=0.6,
-        hallucination_silence_threshold=2.0,
-    )
+    with _whisper_inference_lock:
+        if on_progress:
+            on_progress(
+                f"Loading Whisper {settings.WHISPER_MODEL} "
+                "(first run downloads the model)",
+                10,
+            )
+        model = _get_whisper_model()
+        try:
+            if on_progress:
+                on_progress("Transcribing audio", 25)
+            segments, info = model.transcribe(
+                str(audio_path),
+                language=lang,
+                word_timestamps=True,
+                vad_filter=False,
+                beam_size=10,
+                initial_prompt=prompt,
+                condition_on_previous_text=False,
+                compression_ratio_threshold=2.0,
+                log_prob_threshold=-0.8,
+                no_speech_threshold=0.6,
+                hallucination_silence_threshold=2.0,
+            )
 
-    words: list[WhisperWord] = []
-    for seg in segments:
-        if not seg.words:
-            continue
-        for w in seg.words:
-            t = (w.word or "").strip()
-            if t:
-                words.append(WhisperWord(text=t, start=float(w.start), end=float(w.end)))
+            words: list[WhisperWord] = []
+            for seg in segments:
+                if not seg.words:
+                    continue
+                for w in seg.words:
+                    t = (w.word or "").strip()
+                    if t:
+                        words.append(
+                            WhisperWord(
+                                text=t,
+                                start=float(w.start),
+                                end=float(w.end),
+                            )
+                        )
+            duration = float(getattr(info, "duration", 0.0) or 0.0)
+        finally:
+            _release_whisper_model()
 
     filtered = _strip_hallucinated_repeats(words)
     if len(filtered) != len(words):
         logger.info(
             "Dropped %d hallucinated repeat words", len(words) - len(filtered)
         )
-
-    duration = float(getattr(info, "duration", 0.0) or 0.0)
-
-    if on_progress:
-        on_progress("Refining word timings (wav2vec2)", 45)
-    refined = _refine_with_whisperx(audio_path, filtered, lang or "en")
-    if refined is not None:
-        filtered = refined
 
     filtered = _cap_word_durations(filtered)
 
@@ -558,6 +415,26 @@ class _CharTimeCurve:
         b_start = self.whisper_chars[lo + 1][1]
         return a_start + frac * (b_start - a_start)
 
+    def time_at_end(self, user_char_exclusive_idx: int) -> float:
+        """Time when the preceding user character finishes being sung."""
+        if user_char_exclusive_idx <= 0:
+            return self.first_word_start
+        if not self.whisper_chars or not self.user_to_whisper:
+            return self._fallback(user_char_exclusive_idx)
+        user_idx = min(user_char_exclusive_idx - 1, len(self.user_to_whisper) - 1)
+        whisper_idx = self.user_to_whisper[user_idx]
+        n = len(self.whisper_chars)
+        if whisper_idx <= 0:
+            return float(self.whisper_chars[0][2])
+        if whisper_idx >= n - 1:
+            return float(self.whisper_chars[-1][2])
+
+        lo = int(whisper_idx)
+        frac = whisper_idx - lo
+        a_end = self.whisper_chars[lo][2]
+        b_end = self.whisper_chars[lo + 1][2]
+        return a_end + frac * (b_end - a_end)
+
 
 # ---------------------------------------------------------------------------
 # Stanza-level audio matching
@@ -727,12 +604,7 @@ def align_chunks_to_timeline(
     intro_offset: float = 0.0,
     curve_cache: CharCurveCache | None = None,
 ) -> list[TimedChunk]:
-    """Map user lyric chunks onto the whisper timeline.
-
-    ``chunk.end`` equals the next chunk's ``start`` so the current slide
-    holds through any silence gap; the last chunk extends to
-    ``audio_duration``.
-    """
+    """Map each lyric chunk to its raw sung range on the audio timeline."""
     if not lyric_chunks:
         return []
 
@@ -744,15 +616,20 @@ def align_chunks_to_timeline(
     results: list[TimedChunk] = []
     cum = 0
     for i, chunk in enumerate(lyric_chunks):
-        start = curve.time_at_start(cum)
+        sung_start = curve.time_at_start(cum)
         cum += chunk_lens[i]
-        if i == len(lyric_chunks) - 1:
-            end = audio_duration
-        else:
-            end = curve.time_at_start(cum)
-        if end <= start:
-            end = min(start + 0.5, audio_duration)
-        results.append(TimedChunk(text=chunk, start=start, end=end))
+        sung_end = curve.time_at_end(cum)
+        if sung_end <= sung_start:
+            sung_end = min(sung_start + 0.5, audio_duration)
+        results.append(
+            TimedChunk(
+                text=chunk,
+                start=sung_start,
+                end=sung_end,
+                sung_start=sung_start,
+                sung_end=sung_end,
+            )
+        )
     return results
 
 
@@ -879,7 +756,9 @@ def compute_chunk_units(
             i = j
         if timed_chunks and chunk_idx < len(timed_chunks):
             tc = timed_chunks[chunk_idx]
-            _redistribute_chunk_unit_times(units, tc.start, tc.end)
+            chunk_start = tc.sung_start if tc.sung_start is not None else tc.start
+            chunk_end = tc.sung_end if tc.sung_end is not None else tc.end
+            _redistribute_chunk_unit_times(units, chunk_start, chunk_end)
         all_units.append(units)
     return all_units
 
@@ -899,8 +778,10 @@ def _format_srt_time(t: float) -> str:
 def write_srt(chunks: list[TimedChunk], output_path: Path) -> None:
     lines = []
     for i, c in enumerate(chunks, start=1):
+        start = c.sung_start if c.sung_start is not None else c.start
+        end = c.sung_end if c.sung_end is not None else c.end
         lines.append(str(i))
-        lines.append(f"{_format_srt_time(c.start)} --> {_format_srt_time(c.end)}")
+        lines.append(f"{_format_srt_time(start)} --> {_format_srt_time(end)}")
         lines.append(c.text)
         lines.append("")
     output_path.write_text("\n".join(lines), encoding="utf-8")
@@ -925,6 +806,7 @@ def render_via_remotion(
     show_page_numbers: bool = False,
     padding_style: str = "dark",
     sheet_crop_paths: list[Path] | None = None,
+    background_motion: bool = False,
 ) -> None:
     """Copy assets into a per-job public dir, write props.json, run Remotion."""
     project_dir = settings.REMOTION_PROJECT_DIR
@@ -1000,6 +882,7 @@ def render_via_remotion(
         "lineSpacingMultiplier": line_spacing_multiplier,
         "showPageNumbers": bool(show_page_numbers),
         "paddingStyle": padding_style,
+        "backgroundMotion": bool(background_motion),
     }
 
     props_path = work_dir / "props.json"
@@ -1020,6 +903,14 @@ def render_via_remotion(
         "--concurrency=1",
         "--log=error",
     ]
+    browser_executable = settings.REMOTION_BROWSER_EXECUTABLE.strip()
+    if not browser_executable:
+        mac_chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        if mac_chrome.is_file():
+            browser_executable = str(mac_chrome)
+    if browser_executable:
+        cmd.append(f"--browser-executable={browser_executable}")
+
     logger.info("Running remotion: %s", " ".join(cmd))
     result = subprocess.run(
         cmd,
@@ -1032,6 +923,11 @@ def render_via_remotion(
         tail = (result.stderr or result.stdout or "")[-2000:]
         logger.error("remotion render failed:\n%s", tail)
         raise RuntimeError(f"Remotion render failed: {tail[-500:]}")
+    if not output_path.is_file() or output_path.stat().st_size == 0:
+        raise RuntimeError(
+            "Remotion exited without creating the MP4. "
+            "Set REMOTION_BROWSER_EXECUTABLE to an installed Chrome/Chromium binary."
+        )
 
 
 _FILENAME_SANITIZE_RE = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+")
@@ -1114,7 +1010,14 @@ def plan_to_dict(plan: AudioPlan) -> dict:
         "lyric_chunks": plan.lyric_chunks,
         "chunk_stanza_idx": plan.chunk_stanza_idx,
         "timed": [
-            {"text": tc.text, "start": tc.start, "end": tc.end}
+            {
+                "text": tc.text,
+                "start": tc.start,
+                "end": tc.end,
+                "sung_start": tc.sung_start,
+                "sung_end": tc.sung_end,
+                "lead": tc.lead,
+            }
             for tc in plan.timed
         ],
         "karaoke_units": plan.karaoke_units,
@@ -1143,7 +1046,14 @@ def plan_from_dict(d: dict) -> AudioPlan:
         lyric_chunks=list(d["lyric_chunks"]),
         chunk_stanza_idx=list(d.get("chunk_stanza_idx", [])),
         timed=[
-            TimedChunk(text=tc["text"], start=float(tc["start"]), end=float(tc["end"]))
+            TimedChunk(
+                text=tc["text"],
+                start=float(tc["start"]),
+                end=float(tc["end"]),
+                sung_start=float(tc.get("sung_start", tc["start"])),
+                sung_end=float(tc.get("sung_end", tc["end"])),
+                lead=float(tc.get("lead", DEFAULT_LYRIC_LEAD_SEC)),
+            )
             for tc in d.get("timed", [])
         ],
         karaoke_units=list(d.get("karaoke_units", [])),
@@ -1249,28 +1159,110 @@ def _snap_slides_to_gaps(
     """
     if not words or len(timed) < 2:
         return
-    gap_midpoints: list[float] = []
+    gap_starts: list[float] = []
     for i in range(len(words) - 1):
         a_end = words[i].end
         b_start = words[i + 1].start
         if b_start - a_end >= min_gap_sec:
-            gap_midpoints.append((a_end + b_start) / 2.0)
-    if not gap_midpoints:
+            gap_starts.append(b_start)
+    if not gap_starts:
         return
     for i in range(1, len(timed)):
-        boundary = timed[i].start
+        boundary = timed[i].sung_start
+        if boundary is None:
+            continue
         best = None
         best_dist = window_sec
-        for mid in gap_midpoints:
-            dist = abs(mid - boundary)
+        for gap_start in gap_starts:
+            dist = abs(gap_start - boundary)
             if dist < best_dist:
                 best_dist = dist
-                best = mid
-            if mid > boundary + window_sec:
+                best = gap_start
+            if gap_start > boundary + window_sec:
                 break
         if best is not None:
-            timed[i].start = best
-            timed[i - 1].end = best
+            timed[i].sung_start = best
+
+
+def apply_display_timing_rules(
+    timed: list[TimedChunk],
+    audio_duration: float,
+) -> list[TimedChunk]:
+    """Derive congregation-friendly display cues from sung lyric ranges.
+
+    Normal slides are fully visible 0.5 seconds before singing begins. When
+    the silence after the preceding slide exceeds eight seconds, the next
+    lyrics are shown five seconds early instead. The first slide always uses
+    the normal lead so a long introduction can keep the title visible.
+    """
+    if not timed:
+        return timed
+
+    previous_display_start = -0.1
+    for i, tc in enumerate(timed):
+        sung_start = float(tc.sung_start if tc.sung_start is not None else tc.start)
+        sung_end = float(tc.sung_end if tc.sung_end is not None else tc.end)
+        max_sung_start = max(audio_duration - 0.1, 0.0)
+        sung_start = max(0.0, min(sung_start, max_sung_start))
+        sung_end = min(
+            audio_duration,
+            max(sung_start + 0.1, min(sung_end, audio_duration)),
+        )
+
+        lead = DEFAULT_LYRIC_LEAD_SEC
+        if i > 0:
+            previous = timed[i - 1]
+            previous_sung_end = float(
+                previous.sung_end
+                if previous.sung_end is not None
+                else previous.end
+            )
+            if sung_start - previous_sung_end > LONG_INSTRUMENTAL_THRESHOLD_SEC:
+                lead = LONG_INSTRUMENTAL_LEAD_SEC
+
+        display_start = max(0.0, sung_start - lead)
+        display_start = max(display_start, previous_display_start + 0.1)
+        display_start = min(display_start, max(audio_duration - 0.1, 0.0))
+
+        tc.sung_start = sung_start
+        tc.sung_end = sung_end
+        tc.start = display_start
+        tc.lead = max(0.0, sung_start - display_start)
+        previous_display_start = display_start
+
+    for i in range(len(timed) - 1):
+        timed[i].end = timed[i + 1].start
+    timed[-1].end = audio_duration
+    return timed
+
+
+def apply_sung_start_overrides(
+    plan: AudioPlan,
+    overrides: dict[int, float],
+) -> list[TimedChunk]:
+    """Apply editor cue changes and rebuild display boundaries."""
+    timed = plan.timed
+    for idx, requested_start in overrides.items():
+        if not 0 <= idx < len(timed):
+            continue
+        tc = timed[idx]
+        old_start = float(tc.sung_start if tc.sung_start is not None else tc.start)
+        old_end = float(tc.sung_end if tc.sung_end is not None else tc.end)
+        max_sung_start = max(plan.audio_duration - 0.1, 0.0)
+        new_start = max(0.0, min(float(requested_start), max_sung_start))
+        delta = new_start - old_start
+        tc.sung_start = new_start
+        tc.sung_end = min(
+            plan.audio_duration,
+            max(
+                new_start + 0.1,
+                min(old_end + delta, plan.audio_duration),
+            ),
+        )
+    apply_display_timing_rules(timed, plan.audio_duration)
+    plan.intro_end = timed[0].start if timed else 0.0
+    plan.karaoke_units = []
+    return timed
 
 
 def finalize_plan_timings(
@@ -1292,17 +1284,9 @@ def finalize_plan_timings(
         intro_offset=plan.intro_end,
         curve_cache=curve_cache,
     )
-    for i, tc in enumerate(timed):
-        if tc.start < plan.intro_end:
-            tc.start = plan.intro_end + i * 0.1
-        if tc.end > plan.audio_duration:
-            tc.end = plan.audio_duration
-    for i in range(len(timed) - 1):
-        timed[i].end = timed[i + 1].start
     _snap_slides_to_gaps(timed, plan.whisper_words)
-    for tc in timed:
-        if tc.end <= tc.start:
-            tc.end = min(tc.start + 0.5, plan.audio_duration)
+    apply_display_timing_rules(timed, plan.audio_duration)
+    plan.intro_end = timed[0].start if timed else 0.0
     plan.timed = timed
     return timed
 
@@ -1324,6 +1308,7 @@ def build_video_from_plan(
     show_page_numbers: bool = False,
     padding_style: str = "dark",
     sheet_crop_paths: list[Path] | None = None,
+    background_motion: bool = False,
 ) -> tuple[Path, Path]:
     """Render MP4 + SRT from a pre-computed plan. Does NOT re-transcribe."""
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1367,6 +1352,7 @@ def build_video_from_plan(
         show_page_numbers=show_page_numbers,
         padding_style=padding_style,
         sheet_crop_paths=sheet_crop_paths,
+        background_motion=background_motion,
     )
 
     write_srt(timed, srt_path)
@@ -1375,5 +1361,3 @@ def build_video_from_plan(
         on_progress("Done", 100)
 
     return video_path, srt_path
-
-

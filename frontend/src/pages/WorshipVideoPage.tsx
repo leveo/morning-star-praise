@@ -12,14 +12,11 @@ import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import {
   analyzeSheet,
   analyzeWorshipAudio,
-  createWorshipVideo,
   deleteSheet,
   extractLyricsFromFile,
   extractYouTubeLyrics,
   getBackgrounds,
-  getVideoJob,
   getVideoDownloadUrl,
-  mergeVideoJobStatus,
   uploadSheet,
   type AnalyzedSlide,
   type AnalyzedStanzaOccurrence,
@@ -31,6 +28,7 @@ import {
 import type { BackgroundInfo } from '../types';
 
 type LyricsSource = 'paste' | 'pptx' | 'image' | 'youtube';
+type ApiError = { response?: { data?: { detail?: string } } };
 
 const LYRICS_SOURCE_ORDER: LyricsSource[] = ['paste', 'pptx', 'image', 'youtube'];
 
@@ -49,7 +47,6 @@ export default function WorshipVideoPage() {
   const [extractedBgs, setExtractedBgs] = useState<ExtractedBackground[]>([]);
   const [job, setJob] = useState<VideoJobStatus | null>(null);
   const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
   const [extracting, setExtracting] = useState(false);
 
   const [title, setTitle] = usePersistedState('worshipVideo.title', '');
@@ -70,6 +67,10 @@ export default function WorshipVideoPage() {
     false,
   );
   const [karaokeMode, setKaraokeMode] = usePersistedState('worshipVideo.karaokeMode', false);
+  const [backgroundMotion, setBackgroundMotion] = usePersistedState(
+    'worshipVideo.backgroundMotion',
+    false,
+  );
   const template = useTemplateDefaults();
   const [showPageNumbers, setShowPageNumbers] = usePersistedState(
     'worshipVideo.showPageNumbers',
@@ -101,7 +102,6 @@ export default function WorshipVideoPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [allBackgrounds, setAllBackgrounds] = useState<BackgroundInfo[]>([]);
   const [editMode, setEditMode] = useState(false);
-  const [editedVideoFilename, setEditedVideoFilename] = useState<string>('');
 
   // Optional sheet-music overlay: user uploads a score PNG/PDF, we run OMR and
   // the renderer shows the matching snippet on each slide. Both modes share
@@ -113,15 +113,8 @@ export default function WorshipVideoPage() {
   const [sheetMode, setSheetMode] = usePersistedState<SheetMode>('worshipVideo.sheetMode', 'rebuild');
   const sheetInputRef = useRef<HTMLInputElement>(null);
 
-  const pollRef = useRef<number | null>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const lyricsFileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    return () => {
-      if (pollRef.current !== null) window.clearInterval(pollRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     getBackgrounds().then(setAllBackgrounds).catch(() => {});
@@ -137,6 +130,7 @@ export default function WorshipVideoPage() {
     youtubeUrl: string;
     usePptBackgrounds: boolean;
     karaokeMode: boolean;
+    backgroundMotion: boolean;
     showPageNumbers: boolean;
     maxLines: number;
     maxWidth: number;
@@ -154,6 +148,7 @@ export default function WorshipVideoPage() {
     if (s.youtubeUrl != null) setYoutubeUrl(s.youtubeUrl);
     if (s.usePptBackgrounds != null) setUsePptBackgrounds(s.usePptBackgrounds);
     if (s.karaokeMode != null) setKaraokeMode(s.karaokeMode);
+    if (s.backgroundMotion != null) setBackgroundMotion(s.backgroundMotion);
     if (s.showPageNumbers != null) setShowPageNumbers(s.showPageNumbers);
     if (s.maxLines != null) setMaxLines(s.maxLines);
     if (s.maxWidth != null) setMaxWidth(s.maxWidth);
@@ -167,30 +162,15 @@ export default function WorshipVideoPage() {
       setAnalysisId(payload.analysis_id);
     }
     if (payload.filename) {
-      setEditedVideoFilename(payload.filename);
+      setJob({
+        job_id: 'restored',
+        status: 'done',
+        stage: 'Complete',
+        progress: 100,
+        video_filename: payload.filename,
+      });
     }
   });
-
-  const startPolling = (jobId: string) => {
-    if (pollRef.current !== null) window.clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(async () => {
-      try {
-        const latest = await getVideoJob(jobId);
-        setJob((prev) => mergeVideoJobStatus(prev, latest));
-        if (latest.status === 'done' || latest.status === 'failed') {
-          if (pollRef.current !== null) {
-            window.clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
-          if (latest.status === 'failed' && latest.error) {
-            setError(latest.error);
-          }
-        }
-      } catch {
-        // Keep polling on transient errors
-      }
-    }, 2000);
-  };
 
   const handleSourceChange = (next: LyricsSource) => {
     setLyricsSource(next);
@@ -236,8 +216,8 @@ export default function WorshipVideoPage() {
         setExtractedBgs([]);
         setUsePptBackgrounds(false);
       }
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Extraction failed';
+    } catch (err: unknown) {
+      const msg = (err as ApiError).response?.data?.detail || 'Extraction failed';
       setError(msg);
     } finally {
       setExtracting(false);
@@ -298,14 +278,16 @@ export default function WorshipVideoPage() {
       setPreviewSlides(result.slides);
       setOccurrences(result.occurrences);
       setAnalyzedKey(previewKey);
+      setEditMode(true);
+      setJob(null);
       if (sheetUpload?.session_id) {
         setSheetSession(sheetUpload.session_id);
         void runSheetAnalyzeForSlides(sheetUpload.session_id, result.slides.length, sheetMode);
       } else {
         setSheetCrops([]);
       }
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Failed to analyze audio';
+    } catch (err: unknown) {
+      const msg = (err as ApiError).response?.data?.detail || 'Failed to analyze audio';
       setError(msg);
     } finally {
       setPreviewLoading(false);
@@ -331,60 +313,10 @@ export default function WorshipVideoPage() {
     }
   };
 
-  const handleGenerate = async () => {
-    setError('');
-    if (!hasFreshPreview) {
-      setError('Please analyze the audio first and confirm the slide order');
-      return;
-    }
-
-    setSubmitting(true);
-    setJob(null);
-    try {
-      const useExtracted = usePptBackgrounds && extractedBgs.length > 0;
-      const snapshot = {
-        title, composer, language, lyrics,
-        selectedBgIds, lyricsSource, youtubeUrl,
-        usePptBackgrounds, karaokeMode, showPageNumbers,
-        maxLines, maxWidth,
-        primaryFontSize, secondaryFontSize, lineSpacing,
-      };
-      const created = await createWorshipVideo(
-        analysisId,
-        title,
-        composer,
-        !useExtracted && selectedBgIds.length > 0 ? selectedBgIds : undefined,
-        useExtracted ? extractedBgs.map((b) => b.filename) : undefined,
-        karaokeMode,
-        primaryFontSize ?? undefined,
-        secondaryFontSize ?? undefined,
-        lineSpacing ?? undefined,
-        showPageNumbers,
-        snapshot,
-        template.paddingStyle,
-        sheetSession && sheetCrops.length > 0
-          ? { sessionId: sheetSession, cropFilenames: sheetCrops.map((c) => c.filename) }
-          : undefined,
-      );
-      setJob(created);
-      startPolling(created.job_id);
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Failed to start video job';
-      setError(msg);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const handleReset = () => {
-    if (pollRef.current !== null) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
     setJob(null);
     setError('');
     setEditMode(false);
-    setEditedVideoFilename('');
   };
 
   /** Pool of backgrounds the preview + player + renderer will cycle
@@ -703,6 +635,15 @@ export default function WorshipVideoPage() {
           />
           <span className="text-xs text-slate-400">{t.pageNumber}</span>
         </label>
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={backgroundMotion}
+            onChange={(e) => setBackgroundMotion(e.target.checked)}
+            className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
+          />
+          <span className="text-xs text-slate-400">静态背景轻微推拉</span>
+        </label>
       </div>
 
       <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-3">
@@ -864,21 +805,17 @@ export default function WorshipVideoPage() {
       )}
 
       <button
-        onClick={handleGenerate}
-        disabled={
-          submitting ||
-          !!isRunning ||
-          !hasFreshPreview
-        }
+        onClick={() => setEditMode(true)}
+        disabled={!!isRunning || !hasFreshPreview}
         className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
       >
-        {submitting
-          ? t.starting
-          : isRunning
-            ? t.generating
-            : hasFreshPreview
-              ? t.generateVideo
-              : t.analyzeToEnable}
+        {isRunning
+          ? t.generating
+          : hasFreshPreview
+            ? editMode
+              ? '校准预览已打开'
+              : '打开校准预览并生成视频'
+            : t.analyzeToEnable}
       </button>
 
       <p className="text-xs text-slate-500 -mt-4">{t.firstRunHint}</p>
@@ -908,15 +845,15 @@ export default function WorshipVideoPage() {
         <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-4">
           <h3 className="text-sm font-medium text-slate-300">{t.videoReady}</h3>
           <video
-            key={editedVideoFilename || job.video_filename}
+            key={job.video_filename}
             controls
             preload="metadata"
             className="w-full rounded-lg bg-black"
-            src={`${getVideoDownloadUrl(editedVideoFilename || job.video_filename)}#t=0.1`}
+            src={`${getVideoDownloadUrl(job.video_filename)}#t=0.1`}
           />
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={() => downloadFile(editedVideoFilename || job.video_filename!)}
+              onClick={() => downloadFile(job.video_filename!)}
               className="bg-gold-600 hover:bg-gold-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
               {t.downloadMp4}
@@ -945,8 +882,9 @@ export default function WorshipVideoPage() {
         </div>
       )}
 
-      {isDone && editMode && analysisId && (
+      {hasFreshPreview && editMode && analysisId && (
         <VideoEditor
+          key={analysisId}
           analysisId={analysisId}
           title={title}
           composer={composer}
@@ -957,6 +895,7 @@ export default function WorshipVideoPage() {
           secondaryFontSize={secondaryFontSize ?? undefined}
           lineSpacingMultiplier={lineSpacing ?? undefined}
           showPageNumbers={showPageNumbers}
+          backgroundMotion={backgroundMotion}
           paddingStyle={template.paddingStyle}
           selectedBgIds={selectedBgIds}
           extractedBgFilenames={
@@ -964,7 +903,39 @@ export default function WorshipVideoPage() {
               ? extractedBgs.map((b) => b.filename)
               : undefined
           }
-          onRerendered={setEditedVideoFilename}
+          sheet={
+            sheetSession && sheetCrops.length > 0
+              ? {
+                  sessionId: sheetSession,
+                  cropFilenames: sheetCrops.map((crop) => crop.filename),
+                  cropUrls: sheetCrops.map((crop) => crop.url),
+                }
+              : undefined
+          }
+          inputSnapshot={{
+            title,
+            composer,
+            language,
+            lyrics,
+            selectedBgIds,
+            lyricsSource,
+            youtubeUrl,
+            usePptBackgrounds,
+            karaokeMode,
+            showPageNumbers,
+            backgroundMotion,
+            maxLines,
+            maxWidth,
+            primaryFontSize,
+            secondaryFontSize,
+            lineSpacing,
+          }}
+          onRendered={(latest) => {
+            setJob(latest);
+            if (latest.status === 'failed' && latest.error) {
+              setError(latest.error);
+            }
+          }}
           onClose={() => setEditMode(false)}
         />
       )}

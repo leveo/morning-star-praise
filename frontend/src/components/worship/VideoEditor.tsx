@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Leo Song
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Player } from '@remotion/player';
+import { Player, type PlayerRef } from '@remotion/player';
 import { WorshipVideo, type WorshipVideoProps } from '@remotion-composition/WorshipVideo';
 import {
   getWorshipPlan,
@@ -20,25 +20,107 @@ interface Props {
   title: string;
   composer: string;
   allBackgrounds: BackgroundInfo[];
-  /** Initial background cycle the user picked in the main page — we
-   *  build `titleBackgroundSrc` and `chunks[].backgroundSrc` from this
-   *  list so the Player preview matches what the just-rendered MP4 shows. */
   initialBackgroundPool: BackgroundInfo[];
   karaokeMode: boolean;
   primaryFontSize?: number;
   secondaryFontSize?: number;
   lineSpacingMultiplier?: number;
   showPageNumbers: boolean;
+  backgroundMotion: boolean;
   paddingStyle: 'dark' | 'light';
   selectedBgIds: number[];
   extractedBgFilenames?: string[];
-  onRerendered: (filename: string) => void;
+  sheet?: { sessionId: string; cropFilenames: string[]; cropUrls: string[] };
+  inputSnapshot?: Record<string, unknown>;
+  onRendered: (job: VideoJobStatus) => void;
   onClose: () => void;
 }
 
 const FPS = 30;
+const NORMAL_LEAD_SEC = 0.5;
+const LONG_GAP_THRESHOLD_SEC = 8;
+const LONG_GAP_LEAD_SEC = 5;
 
-type TimingEdit = { start: number; end: number };
+type TimingEdit = { sungStart: number };
+type PlanTimed = WorshipPlanResponse['plan']['timed'][number];
+type ApiError = { response?: { data?: { detail?: string } } };
+
+type PreviewTiming = PlanTimed & {
+  displayStart: number;
+  displayEnd: number;
+  previewSungStart: number;
+  previewSungEnd: number;
+};
+
+function derivePreviewTimings(
+  timed: PlanTimed[],
+  edits: Record<number, TimingEdit>,
+  audioDuration: number,
+): PreviewTiming[] {
+  let previousDisplayStart = -0.1;
+  const derived = timed.map((tc, i) => {
+    const originalSungStart = tc.sung_start ?? tc.start;
+    const originalSungEnd = tc.sung_end ?? tc.end;
+    const maxSungStart = Math.max(audioDuration - 0.1, 0);
+    const sungStart = Math.max(
+      0,
+      Math.min(edits[i]?.sungStart ?? originalSungStart, maxSungStart),
+    );
+    const delta = sungStart - originalSungStart;
+    const sungEnd = Math.min(
+      audioDuration,
+      Math.max(
+        sungStart + 0.1,
+        Math.min(originalSungEnd + delta, audioDuration),
+      ),
+    );
+
+    let lead = NORMAL_LEAD_SEC;
+    if (i > 0) {
+      const previous = timed[i - 1];
+      const previousOriginalStart = previous.sung_start ?? previous.start;
+      const previousOriginalEnd = previous.sung_end ?? previous.end;
+      const previousDelta =
+        (edits[i - 1]?.sungStart ?? previousOriginalStart) - previousOriginalStart;
+      const previousSungEnd = previousOriginalEnd + previousDelta;
+      if (sungStart - previousSungEnd > LONG_GAP_THRESHOLD_SEC) {
+        lead = LONG_GAP_LEAD_SEC;
+      }
+    }
+
+    let displayStart = Math.max(0, sungStart - lead);
+    displayStart = Math.max(displayStart, previousDisplayStart + 0.1);
+    displayStart = Math.min(displayStart, Math.max(audioDuration - 0.1, 0));
+    previousDisplayStart = displayStart;
+
+    return {
+      ...tc,
+      displayStart,
+      displayEnd: audioDuration,
+      previewSungStart: sungStart,
+      previewSungEnd: sungEnd,
+      lead: Math.max(0, sungStart - displayStart),
+    };
+  });
+
+  for (let i = 0; i < derived.length - 1; i += 1) {
+    derived[i].displayEnd = derived[i + 1].displayStart;
+  }
+  return derived;
+}
+
+function shiftedUnits(
+  units: PlanTimed['units'],
+  originalStart: number,
+  previewStart: number,
+) {
+  if (!units || originalStart === previewStart) return units;
+  const delta = previewStart - originalStart;
+  return units.map((unit) => ({
+    ...unit,
+    startSec: unit.startSec == null ? null : Math.max(0, unit.startSec + delta),
+  }));
+}
 
 export default function VideoEditor({
   analysisId,
@@ -51,33 +133,24 @@ export default function VideoEditor({
   secondaryFontSize,
   lineSpacingMultiplier,
   showPageNumbers,
+  backgroundMotion,
   paddingStyle,
   selectedBgIds,
   extractedBgFilenames,
-  onRerendered,
+  sheet,
+  inputSnapshot,
+  onRendered,
   onClose,
 }: Props) {
   const [plan, setPlan] = useState<WorshipPlanResponse | null>(null);
-  const [loadError, setLoadError] = useState<string>('');
-
-  // Per-slide user edits — keyed by slide index. If the key is missing,
-  // the slide uses the original time from plan.timed.
+  const [loadError, setLoadError] = useState('');
   const [timingEdits, setTimingEdits] = useState<Record<number, TimingEdit>>({});
   const [bgOverrides, setBgOverrides] = useState<Record<number, number>>({});
   const [bgPickerOpen, setBgPickerOpen] = useState<number | null>(null);
-  const bgPickerRef = useRef<HTMLDivElement | null>(null);
-  // The BG picker panel renders BELOW the scrollable slide list. Click "Change
-  // BG" on a slide near the top and the panel spawns out of view, so the
-  // interaction reads as "nothing happened". Scroll it into view on open.
-  useEffect(() => {
-    if (bgPickerOpen !== null && bgPickerRef.current) {
-      bgPickerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, [bgPickerOpen]);
-
-  // Re-render progress state
   const [submitting, setSubmitting] = useState(false);
   const [job, setJob] = useState<VideoJobStatus | null>(null);
+  const playerRef = useRef<PlayerRef>(null);
+  const bgPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +160,7 @@ export default function VideoEditor({
       })
       .catch((err) => {
         if (!cancelled) {
-          setLoadError(err?.response?.data?.detail || 'Failed to load analysis');
+          setLoadError(err?.response?.data?.detail || '无法载入分析结果');
         }
       });
     return () => {
@@ -95,8 +168,12 @@ export default function VideoEditor({
     };
   }, [analysisId]);
 
-  // Depend only on the job_id / active-ness, not the whole job object —
-  // otherwise every tick's setJob would tear down and rebuild the interval.
+  useEffect(() => {
+    if (bgPickerOpen !== null && bgPickerRef.current) {
+      bgPickerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [bgPickerOpen]);
+
   const jobId = job?.job_id;
   const shouldPoll =
     !!job && (job.status === 'pending' || job.status === 'processing');
@@ -106,60 +183,65 @@ export default function VideoEditor({
       try {
         const latest = await getVideoJob(jobId);
         setJob((prev) => mergeVideoJobStatus(prev, latest));
-        if (latest.status === 'done' && latest.video_filename) {
-          onRerendered(latest.video_filename);
+        onRendered(latest);
+        if (latest.status === 'done') {
           setSubmitting(false);
         } else if (latest.status === 'failed') {
           setSubmitting(false);
         }
       } catch {
-        /* keep polling */
+        // Keep polling through transient backend restarts.
       }
     }, 2000);
     return () => window.clearInterval(id);
-  }, [shouldPoll, jobId, onRerendered]);
+  }, [shouldPoll, jobId, onRendered]);
 
-  /** Compute the background URL for slide i using the same precedence as
-   *  the backend's ``assign_backgrounds``: extracted PPT bgs → user
-   *  selected ids → the full default library. ``bgOverrides`` from the
-   *  editor take precedence over everything. */
+  const previewTimings = useMemo(() => {
+    if (!plan) return [];
+    return derivePreviewTimings(
+      plan.plan.timed,
+      timingEdits,
+      plan.plan.audio_duration,
+    );
+  }, [plan, timingEdits]);
+
   const backgroundUrlForSlide = useMemo(() => {
     return (i: number): string | null => {
       const overrideId = bgOverrides[i];
       if (overrideId != null) {
-        const bg = allBackgrounds.find((b) => b.id === overrideId);
+        const bg = allBackgrounds.find((item) => item.id === overrideId);
         if (bg) return bg.url;
       }
       if (initialBackgroundPool.length === 0) return null;
-      return initialBackgroundPool[i % initialBackgroundPool.length].url;
+      // Slot zero belongs to the title page in the backend renderer.
+      return initialBackgroundPool[(i + 1) % initialBackgroundPool.length].url;
     };
   }, [bgOverrides, allBackgrounds, initialBackgroundPool]);
 
-  // Build Player inputProps live from plan + edits so scrubbing the
-  // inputs re-renders the preview instantly.
   const playerProps: WorshipVideoProps | null = useMemo(() => {
     if (!plan) return null;
-    const timed = plan.plan.timed;
-    const chunks = timed.map((tc, i) => {
-      const edit = timingEdits[i];
-      return {
-        text: tc.text,
-        startSec: edit?.start ?? tc.start,
-        endSec: edit?.end ?? tc.end,
-        backgroundSrc: backgroundUrlForSlide(i),
-        units: tc.units,
-      };
-    });
     return {
       title,
       composer,
       language: plan.plan.language,
       audioSrc: plan.audio_url,
       audioDurationSec: plan.plan.audio_duration,
-      introDurationSec: plan.plan.intro_end,
-      chunks,
-      // Title slide uses index 0 from the pool (mirrors render_via_remotion
-      // which uses background_paths[0] for the title slide).
+      introDurationSec: previewTimings[0]?.displayStart ?? 0,
+      chunks: previewTimings.map((tc, i) => ({
+        text: tc.text,
+        startSec: tc.displayStart,
+        endSec: tc.displayEnd,
+        backgroundSrc: backgroundUrlForSlide(i),
+        sheetImageSrc:
+          sheet?.cropUrls.length
+            ? sheet.cropUrls[i % sheet.cropUrls.length]
+            : null,
+        units: shiftedUnits(
+          tc.units,
+          tc.sung_start ?? tc.start,
+          tc.previewSungStart,
+        ),
+      })),
       titleBackgroundSrc:
         initialBackgroundPool.length > 0 ? initialBackgroundPool[0].url : null,
       karaokeMode,
@@ -168,13 +250,15 @@ export default function VideoEditor({
       lineSpacingMultiplier: lineSpacingMultiplier ?? null,
       showPageNumbers,
       paddingStyle,
+      backgroundMotion,
     };
   }, [
     plan,
     title,
     composer,
-    timingEdits,
+    previewTimings,
     backgroundUrlForSlide,
+    sheet,
     initialBackgroundPool,
     karaokeMode,
     primaryFontSize,
@@ -182,16 +266,36 @@ export default function VideoEditor({
     lineSpacingMultiplier,
     showPageNumbers,
     paddingStyle,
+    backgroundMotion,
   ]);
 
-  const durationInFrames = useMemo(() => {
-    if (!plan) return 1;
-    return Math.max(1, Math.round(plan.plan.audio_duration * FPS));
-  }, [plan]);
+  const durationInFrames = Math.max(
+    1,
+    Math.round((plan?.plan.audio_duration ?? 0) * FPS),
+  );
 
-  const handleRerender = async () => {
+  const updateSungStart = (idx: number, value: number) => {
+    if (!Number.isFinite(value)) return;
+    setTimingEdits((prev) => ({
+      ...prev,
+      [idx]: { sungStart: Math.max(0, value) },
+    }));
+  };
+
+  const setFromPlayhead = (idx: number) => {
+    const frame = playerRef.current?.getCurrentFrame() ?? 0;
+    updateSungStart(idx, frame / FPS);
+  };
+
+  const seekToSlide = (idx: number) => {
+    const target = previewTimings[idx]?.displayStart ?? 0;
+    playerRef.current?.seekTo(Math.max(0, Math.round((target - 0.4) * FPS)));
+  };
+
+  const handleRender = async () => {
     if (!plan) return;
     setSubmitting(true);
+    setLoadError('');
     try {
       const status = await rerenderWorshipVideo({
         analysisId,
@@ -204,34 +308,40 @@ export default function VideoEditor({
         secondaryFontSize,
         lineSpacingMultiplier,
         showPageNumbers,
+        backgroundMotion,
         paddingStyle,
-        timingOverrides: Object.entries(timingEdits).map(([idx, e]) => ({
+        timingOverrides: Object.entries(timingEdits).map(([idx, edit]) => ({
           idx: Number(idx),
-          start_sec: e.start,
-          end_sec: e.end,
+          sung_start_sec: edit.sungStart,
         })),
         backgroundOverrides: Object.entries(bgOverrides).map(([idx, id]) => ({
           idx: Number(idx),
           background_id: id,
         })),
+        sheet:
+          sheet?.cropFilenames.length
+            ? {
+                sessionId: sheet.sessionId,
+                cropFilenames: sheet.cropFilenames,
+              }
+            : undefined,
+        inputSnapshot,
       });
       setJob(status);
-    } catch (err: any) {
+      onRendered(status);
+      getWorshipPlan(analysisId)
+        .then((refreshedPlan) => {
+          setPlan(refreshedPlan);
+          setTimingEdits({});
+        })
+        .catch(() => {
+          // Rendering already started; a transient refresh failure is harmless.
+        });
+    } catch (err: unknown) {
       setSubmitting(false);
-      setLoadError(err?.response?.data?.detail || 'Re-render failed');
+      const detail = (err as ApiError).response?.data?.detail;
+      setLoadError(detail || '视频生成失败');
     }
-  };
-
-  const updateTiming = (idx: number, field: 'start' | 'end', value: number) => {
-    if (!plan) return;
-    const current = timingEdits[idx] ?? plan.plan.timed[idx];
-    setTimingEdits((prev) => ({
-      ...prev,
-      [idx]: {
-        start: field === 'start' ? value : current.start,
-        end: field === 'end' ? value : current.end,
-      },
-    }));
   };
 
   if (loadError) {
@@ -245,28 +355,37 @@ export default function VideoEditor({
   if (!plan || !playerProps) {
     return (
       <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 text-sm text-slate-400">
-        Loading plan…
+        正在载入校准预览…
       </div>
     );
   }
 
-  const isRendering = submitting || (job && (job.status === 'pending' || job.status === 'processing'));
+  const isRendering = Boolean(
+    submitting || (job && (job.status === 'pending' || job.status === 'processing')),
+  );
 
   return (
     <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-slate-200">Edit video</h3>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-medium text-slate-200">渲染前歌词校准</h3>
+          <p className="text-xs text-slate-500 mt-1">
+            播放音频，将播放指针停在歌词开唱处，再点“设为当前时间”。普通页面会提前
+            0.5 秒完整显示，超过 8 秒的长间奏会提前 5 秒显示下一页。
+          </p>
+        </div>
         <button
           onClick={onClose}
-          disabled={!!isRendering}
+          disabled={isRendering}
           className="text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50"
         >
-          Close
+          收起
         </button>
       </div>
 
       <div className="rounded-lg overflow-hidden border border-slate-700 bg-black">
         <Player
+          ref={playerRef}
           component={WorshipVideo}
           inputProps={playerProps}
           durationInFrames={durationInFrames}
@@ -275,72 +394,97 @@ export default function VideoEditor({
           fps={FPS}
           controls
           autoPlay={false}
-          loop
+          loop={false}
           style={{ width: '100%', aspectRatio: '16 / 9' }}
         />
       </div>
 
-      <div className="space-y-2 max-h-[28rem] overflow-y-auto pr-2">
-        {plan.plan.timed.map((tc, i) => {
-          const edit = timingEdits[i];
-          const start = edit?.start ?? tc.start;
-          const end = edit?.end ?? tc.end;
-          const isDirty = !!edit || bgOverrides[i] != null;
+      <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-2">
+        {previewTimings.map((tc, i) => {
+          const isDirty = timingEdits[i] != null || bgOverrides[i] != null;
           return (
             <div
               key={i}
-              className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${
+              className={`rounded-lg border px-3 py-3 space-y-2 ${
                 isDirty
                   ? 'bg-amber-900/20 border-amber-700/60'
                   : 'bg-slate-900/40 border-slate-700'
               }`}
             >
-              <span className="text-xs text-slate-500 w-10 shrink-0">#{i + 1}</span>
-              <div className="flex items-center gap-1 text-xs text-slate-400">
-                <label>start</label>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-500 w-8">#{i + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => seekToSlide(i)}
+                  className="text-xs text-sky-400 hover:text-sky-300"
+                >
+                  跳到此页
+                </button>
+                <span className="text-xs text-slate-500">开唱</span>
+                <button
+                  type="button"
+                  onClick={() => updateSungStart(i, tc.previewSungStart - 0.1)}
+                  className="rounded bg-slate-700 px-2 py-1 text-xs text-white hover:bg-slate-600"
+                >
+                  -0.1
+                </button>
                 <input
                   type="number"
                   step="0.1"
-                  value={start.toFixed(2)}
-                  onChange={(e) => updateTiming(i, 'start', Number(e.target.value))}
+                  min="0"
+                  value={tc.previewSungStart.toFixed(2)}
+                  onChange={(event) => updateSungStart(i, Number(event.target.value))}
                   className="w-20 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-xs"
                 />
-                <label className="ml-1">end</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={end.toFixed(2)}
-                  onChange={(e) => updateTiming(i, 'end', Number(e.target.value))}
-                  className="w-20 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-xs"
-                />
+                <button
+                  type="button"
+                  onClick={() => updateSungStart(i, tc.previewSungStart + 0.1)}
+                  className="rounded bg-slate-700 px-2 py-1 text-xs text-white hover:bg-slate-600"
+                >
+                  +0.1
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFromPlayhead(i)}
+                  className="rounded bg-amber-700 px-2 py-1 text-xs text-white hover:bg-amber-600"
+                >
+                  设为当前时间
+                </button>
+                <span className="text-xs text-emerald-400">
+                  画面 {tc.displayStart.toFixed(2)}s
+                  {tc.lead >= LONG_GAP_LEAD_SEC - 0.01 ? '（长间奏）' : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setBgPickerOpen(bgPickerOpen === i ? null : i)}
+                  className="ml-auto text-xs text-gold-400 hover:text-gold-300"
+                >
+                  更换背景
+                </button>
               </div>
-              <p className="flex-1 text-xs text-slate-300 truncate">
-                {tc.text.replace(/\n/g, ' / ')}
+              <p className="text-sm text-slate-200 whitespace-pre-line pl-10">
+                {tc.text}
               </p>
-              <button
-                type="button"
-                onClick={() => setBgPickerOpen(bgPickerOpen === i ? null : i)}
-                className="text-xs text-gold-400 hover:text-gold-300 whitespace-nowrap"
-              >
-                Change BG
-              </button>
             </div>
           );
         })}
       </div>
 
       {bgPickerOpen !== null && (
-        <div ref={bgPickerRef} className="rounded-lg border border-slate-700 bg-slate-900/60 p-3 space-y-2">
+        <div
+          ref={bgPickerRef}
+          className="rounded-lg border border-slate-700 bg-slate-900/60 p-3 space-y-2"
+        >
           <div className="flex items-center justify-between text-xs text-slate-300">
-            <span>Pick a background for slide #{bgPickerOpen + 1}</span>
+            <span>为第 {bgPickerOpen + 1} 页选择背景</span>
             <button
               onClick={() => setBgPickerOpen(null)}
               className="text-slate-400 hover:text-slate-200"
             >
-              Cancel
+              取消
             </button>
           </div>
-          <div className="grid grid-cols-6 gap-2 max-h-64 overflow-y-auto">
+          <div className="grid grid-cols-4 md:grid-cols-6 gap-2 max-h-64 overflow-y-auto">
             {allBackgrounds.map((bg) => (
               <button
                 key={bg.id}
@@ -361,7 +505,7 @@ export default function VideoEditor({
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <button
           type="button"
           onClick={() => {
@@ -369,35 +513,36 @@ export default function VideoEditor({
             setBgOverrides({});
           }}
           disabled={
-            !!isRendering ||
-            (Object.keys(timingEdits).length === 0 && Object.keys(bgOverrides).length === 0)
+            isRendering ||
+            (Object.keys(timingEdits).length === 0 &&
+              Object.keys(bgOverrides).length === 0)
           }
           className="text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40"
         >
-          Reset all edits
+          重置全部人工调整
         </button>
         <div className="flex items-center gap-3">
-          {job && job.status === 'processing' && (
+          {job && (job.status === 'pending' || job.status === 'processing') && (
             <span className="text-xs text-slate-400">
               {job.stage} {job.progress}%
             </span>
           )}
-          {job && job.status === 'done' && job.video_filename && (
+          {job?.status === 'done' && job.video_filename && (
             <a
               href={getVideoDownloadUrl(job.video_filename)}
               download={job.video_filename}
               className="text-xs text-green-400 hover:text-green-300"
             >
-              ✓ Re-rendered — download new MP4
+              已生成，下载 MP4
             </a>
           )}
           <button
             type="button"
-            onClick={handleRerender}
-            disabled={!!isRendering}
-            className="bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            onClick={handleRender}
+            disabled={isRendering}
+            className="bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white px-5 py-2 rounded-lg text-sm font-medium"
           >
-            {isRendering ? 'Re-rendering…' : 'Re-render Video'}
+            {isRendering ? '正在生成…' : job?.status === 'done' ? '按当前调整重新生成' : '按当前校准生成视频'}
           </button>
         </div>
       </div>
