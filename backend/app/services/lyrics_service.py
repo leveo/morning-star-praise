@@ -220,8 +220,15 @@ def _normalize_clause_count(
     max_breaks: int = 1,
     max_width: int = _MAX_LINE_WIDTH_HARD,
 ) -> list[str]:
-    """Force-split a line so each output piece has at most ``max_breaks``
-    mid-clause separators AND at most ``max_width`` total characters.
+    """Normalize a Chinese line by clause count and display width.
+
+    User-provided English line breaks are preserved. English commas are
+    grammatical punctuation rather than reliable lyric-display boundaries,
+    so splitting them here can turn one intentionally formatted line into
+    several rows regardless of the configured width.
+
+    Chinese output pieces have at most ``max_breaks`` mid-clause separators
+    AND at most ``max_width`` total characters.
 
     Short-clause exception for the clause rule: if every clause between
     breaks is under ``_SHORT_CLAUSE_ZH_THRESHOLD`` Chinese characters, allow
@@ -234,6 +241,9 @@ def _normalize_clause_count(
     ``_enforce_max_width`` so Chinese lines over ``max_width`` chars get
     further bisected at their middle break char (or mid-index fallback).
     """
+    if not contains_chinese(line):
+        return [line]
+
     break_positions = [i for i, c in enumerate(line) if c in _CLAUSE_BREAK_CHARS]
 
     effective_max = max_breaks
@@ -519,5 +529,4 @@ def parse_lyrics_bilingual(
             slides.append(SlideData(text="\n".join(chunk)))
 
     return slides
-
 
