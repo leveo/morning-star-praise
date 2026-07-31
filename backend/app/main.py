@@ -87,12 +87,21 @@ async def lifespan(app: FastAPI):
     # Cleanup old generated files on startup — but protect anything the
     # Songs Library still references (outputs + their analysis_id caches)
     # so 'Download' and 'Resume session' stay alive for persisted history.
+    protected_files: set[str] = set()
+    protected_analyses: set[str] = set()
     try:
         from app.services import library_service
-        protected_files, protected_analyses = library_service.referenced_artifacts()
+        library_files, library_analyses = library_service.referenced_artifacts()
+        protected_files.update(library_files)
+        protected_analyses.update(library_analyses)
     except Exception:
-        protected_files = set()
-        protected_analyses = set()
+        logger.exception("Could not read library artifact references during cleanup")
+    try:
+        draft_files, draft_analyses = videos.referenced_draft_artifacts()
+        protected_files.update(draft_files)
+        protected_analyses.update(draft_analyses)
+    except Exception:
+        logger.exception("Could not read browser draft references during cleanup")
     _cleanup_old_files(settings.OUTPUT_DIR, settings.OUTPUT_CLEANUP_HOURS, protected_files)
     _cleanup_old_files(settings.UPLOADS_DIR, settings.OUTPUT_CLEANUP_HOURS)
     _cleanup_old_files(

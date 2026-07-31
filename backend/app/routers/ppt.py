@@ -81,6 +81,9 @@ def generate_ppt(request: PPTGenerateRequest):
 
     filename = generate_pptx(
         title=request.title,
+        title_en=request.title_en,
+        collection_zh=request.collection_zh,
+        collection_en=request.collection_en,
         slides=slides,
         language=request.language,
         background_paths=bg_paths,

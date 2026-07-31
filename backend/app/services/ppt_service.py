@@ -413,8 +413,20 @@ def _add_text_with_overlay(
         para_idx += 1
 
 
-def _add_title_slide(slide, title: str, composer: str, language: str, slide_width, slide_height, *, padding_style: str = "dark"):
-    """Add a prominent title slide with song name and composer."""
+def _add_title_slide(
+    slide,
+    title: str,
+    composer: str,
+    language: str,
+    slide_width,
+    slide_height,
+    *,
+    title_en: str = "",
+    collection_zh: str = "",
+    collection_en: str = "",
+    padding_style: str = "dark",
+):
+    """Add the bilingual song-title card using separate editable text boxes."""
     is_zh = language.startswith("zh") or contains_chinese(title)
     palette = _padding_palette(padding_style)
     overlay_rgb = palette["overlay"]
@@ -435,22 +447,23 @@ def _add_title_slide(slide, title: str, composer: str, language: str, slide_widt
             alpha_el.set("val", palette["alpha_title"])
     overlay.line.fill.background()
 
-    # Title text — size based on character count (60-96pt)
+    # Chinese title — size based on character count.
     char_count = len(title)
     if char_count <= 4:
-        title_size = 96
-    elif char_count <= 8:
         title_size = 84
+    elif char_count <= 8:
+        title_size = 78
     elif char_count <= 12:
-        title_size = 72
+        title_size = 70
     elif char_count <= 20:
-        title_size = 66
+        title_size = 64
     else:
         title_size = 60
 
-    title_top = Inches(2.0)
+    has_full_metadata = bool(title_en.strip() or collection_zh.strip() or collection_en.strip())
+    title_top = Inches(1.25 if has_full_metadata else 2.0)
     title_box = slide.shapes.add_textbox(
-        Inches(1.0), title_top, slide_width - Inches(2.0), Inches(2.5),
+        Inches(1.0), title_top, slide_width - Inches(2.0), Inches(1.5),
     )
     tf = title_box.text_frame
     tf.word_wrap = True
@@ -468,29 +481,47 @@ def _add_title_slide(slide, title: str, composer: str, language: str, slide_widt
     run.font.color.rgb = title_rgb
     run.font.bold = True
     if is_zh:
-        run.font.name = "PingFang SC"
-        _set_east_asian_font(run, "PingFang SC")
+        zh_font = "PingFang TC" if language == "zh-hant" else "PingFang SC"
+        run.font.name = zh_font
+        _set_east_asian_font(run, zh_font)
     else:
         run.font.name = "Arial"
 
-    # Composer text — smaller, below title
-    if composer:
+    def add_detail(text: str, top, height, size: int, *, chinese: bool = False):
+        if not text.strip():
+            return
         comp_box = slide.shapes.add_textbox(
-            Inches(1.0), title_top + Inches(2.8), slide_width - Inches(2.0), Inches(1.0),
+            Inches(1.0), top, slide_width - Inches(2.0), height,
         )
         tf2 = comp_box.text_frame
         tf2.word_wrap = True
+        body_pr2 = tf2._txBody.find(f"{{{a_ns}}}bodyPr")
+        if body_pr2 is None:
+            body_pr2 = etree.SubElement(tf2._txBody, f"{{{a_ns}}}bodyPr")
+        body_pr2.set("anchor", "ctr")
         p2 = tf2.paragraphs[0]
         p2.alignment = PP_ALIGN.CENTER
         run2 = p2.add_run()
-        run2.text = composer
-        run2.font.size = Pt(32)
+        run2.text = text.strip()
+        run2.font.size = Pt(size)
         run2.font.color.rgb = composer_rgb
-        if is_zh:
-            run2.font.name = "PingFang SC"
-            _set_east_asian_font(run2, "PingFang SC")
+        run2.font.bold = True
+        if chinese:
+            zh_font = "PingFang TC" if language == "zh-hant" else "PingFang SC"
+            run2.font.name = zh_font
+            _set_east_asian_font(run2, zh_font)
         else:
             run2.font.name = "Arial"
+
+    if has_full_metadata:
+        add_detail(title_en, Inches(2.75), Inches(0.8), 40)
+        if collection_zh.strip() or collection_en.strip():
+            add_detail(collection_zh, Inches(4.05), Inches(0.65), 30, chinese=True)
+            add_detail(collection_en, Inches(4.7), Inches(0.65), 26)
+        elif composer:
+            add_detail(composer, Inches(4.05), Inches(0.8), 32, chinese=is_zh)
+    elif composer:
+        add_detail(composer, title_top + Inches(2.2), Inches(1.0), 32, chinese=is_zh)
 
 
 def _add_sheet_with_lyrics_slide(
@@ -605,6 +636,9 @@ def generate_pptx(
     slides: list[SlideData],
     language: str,
     background_paths: list[Path | None],
+    title_en: str = "",
+    collection_zh: str = "",
+    collection_en: str = "",
     composer: str = "",
     show_page_numbers: bool = False,
     primary_font_size: int | None = None,
@@ -633,7 +667,18 @@ def generate_pptx(
     slide = prs.slides.add_slide(blank_layout)
     if background_paths:
         _add_background(slide, background_paths[0], slide_width, slide_height)
-    _add_title_slide(slide, title, composer, language, slide_width, slide_height, padding_style=padding_style)
+    _add_title_slide(
+        slide,
+        title,
+        composer,
+        language,
+        slide_width,
+        slide_height,
+        title_en=title_en,
+        collection_zh=collection_zh,
+        collection_en=collection_en,
+        padding_style=padding_style,
+    )
 
     # Content slides
     for i, slide_data in enumerate(slides):

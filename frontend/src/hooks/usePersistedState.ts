@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 /**
  * Drop-in replacement for `useState` that mirrors the value to `sessionStorage`
  * so it survives unmount/remount from route changes. Tab switches (navigating
- * between LyricsPage / YouTubePage / etc.) unmount the leaving page and React
+ * between SlidesPage / YouTubePage / etc.) unmount the leaving page and React
  * would otherwise lose every `useState` value — this hook keeps it.
  *
  * Values are JSON-serialized, so only JSON-safe data fits (strings, numbers,

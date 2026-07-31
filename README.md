@@ -238,6 +238,32 @@ From the repo root:
 
 It kills any existing dev servers on `:8000` and `:5173`, auto-starts Postgres if installed but not running (via `brew services` on macOS or `systemctl` on Linux), then launches backend + frontend and tails both logs. `Ctrl+C` stops everything.
 
+### 5.5. Keep the local app running on macOS
+
+For a local deployment that stays active after Terminal closes and restarts
+automatically after login, install the bundled user-level LaunchAgents:
+
+```bash
+./scripts/morning-star-service.sh install
+```
+
+The installer builds the frontend, starts production-style services on ports
+`5173` and `8000`, and configures macOS to restart either process if it exits.
+It does not require `sudo`.
+
+```bash
+./scripts/morning-star-service.sh status   # service + HTTP health
+./scripts/morning-star-service.sh restart  # apply backend or frontend changes
+./scripts/morning-star-service.sh logs     # follow persistent logs
+./scripts/morning-star-service.sh stop     # stop until explicitly started
+./scripts/morning-star-service.sh start
+./scripts/morning-star-service.sh uninstall
+```
+
+Open the app at [http://localhost:5173](http://localhost:5173). Persistent logs
+are written to `.service-logs/`. Use `praise.sh` only for foreground development;
+it intentionally stops when its terminal session ends.
+
 ### 6. Remotion Studio (optional)
 
 Only needed if you're iterating on the composition itself (`remotion/src/WorshipVideo.tsx`). The backend shells out to `@remotion/cli` during rendering, so the Studio doesn't need to run for normal use.

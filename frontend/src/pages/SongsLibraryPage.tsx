@@ -18,7 +18,7 @@ import {
 
 /** Map from source_page → the frontend route that renders it. */
 const PAGE_ROUTE: Record<LibrarySourcePage, string> = {
-  lyrics: '/',
+  lyrics: '/slides',
   youtube: '/youtube',
   ocr: '/ocr',
   'worship-video': '/worship-video',

@@ -8,6 +8,54 @@ const api = axios.create({
   baseURL: '/api',
 });
 
+export interface DocxLyricsWarning {
+  code: string;
+  message: string;
+  severity: 'warning' | 'error';
+  section_id: string | null;
+}
+
+export interface DocxLyricsSection {
+  id: string;
+  kind: 'verse' | 'chorus';
+  number: number | null;
+  zh_lines: string[];
+  en_lines: string[];
+}
+
+export interface DocxLyricsImport {
+  source_filename: string;
+  output_filename: string;
+  song_number: string;
+  title_zh: string;
+  title_en: string;
+  collection_zh: string;
+  collection_en: string;
+  sections: DocxLyricsSection[];
+  sequence: string[];
+  primary_lyrics: string;
+  secondary_lyrics: string;
+  combined_lyrics: string;
+  warnings: DocxLyricsWarning[];
+  has_blocking_errors: boolean;
+}
+
+export interface DocxLyricsExportRequest {
+  source_filename: string;
+  song_number: string;
+  title_zh: string;
+  title_en: string;
+  collection_zh: string;
+  collection_en: string;
+  sections: DocxLyricsSection[];
+}
+
+export interface TitleMetadata {
+  titleEn?: string;
+  collectionZh?: string;
+  collectionEn?: string;
+}
+
 // Attach X-LLM-* headers from localStorage settings on every request. API
 // keys never travel over these headers — the backend reads keys from .env.
 api.interceptors.request.use((config) => {
@@ -54,6 +102,25 @@ export async function parseLyricsBilingual(
   return data;
 }
 
+export async function importDocxLyrics(file: File): Promise<DocxLyricsImport> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<DocxLyricsImport>('/lyrics/import-docx', form, {
+    timeout: 30_000,
+  });
+  return data;
+}
+
+export async function exportDocxLyrics(
+  request: DocxLyricsExportRequest,
+): Promise<Blob> {
+  const { data } = await api.post('/lyrics/export-docx', request, {
+    responseType: 'blob',
+    timeout: 30_000,
+  });
+  return data as Blob;
+}
+
 export async function generatePPT(
   title: string,
   slides: SlideData[],
@@ -66,9 +133,13 @@ export async function generatePPT(
   lineSpacingMultiplier?: number,
   paddingStyle: 'dark' | 'light' = 'dark',
   sheet?: { sessionId: string; cropNames: string[] },
+  titleMetadata?: TitleMetadata,
 ): Promise<PPTGenerateResponse> {
   const { data } = await api.post<PPTGenerateResponse>('/ppt/generate', {
     title,
+    title_en: titleMetadata?.titleEn,
+    collection_zh: titleMetadata?.collectionZh,
+    collection_en: titleMetadata?.collectionEn,
     composer,
     slides,
     language,
@@ -339,6 +410,7 @@ export interface AnalyzedSlide {
   sung_end_sec: number;
   lead_sec: number;
   stanza_idx: number;
+  background_group_idx: number;
 }
 
 export interface AnalyzedStanzaOccurrence {
@@ -369,6 +441,7 @@ export interface WorshipPlanResponse {
     occurrences: { stanza_idx: number; start_sec: number; end_sec: number; score: number }[];
     lyric_chunks: string[];
     chunk_stanza_idx: number[];
+    chunk_background_group: number[];
     timed: {
       text: string;
       start: number;
@@ -393,13 +466,19 @@ export async function getWorshipPlan(
 export interface RerenderRequest {
   analysisId: string;
   title: string;
+  titleEn?: string;
+  collectionZh?: string;
+  collectionEn?: string;
   composer: string;
   backgroundIds?: number[];
   extractedBackgroundPaths?: string[];
   karaokeMode?: boolean;
   primaryFontSize?: number;
   secondaryFontSize?: number;
+  /** Legacy shared spacing retained for saved callers. */
   lineSpacingMultiplier?: number;
+  primaryLineSpacingMultiplier?: number;
+  secondaryLineSpacingMultiplier?: number;
   showPageNumbers?: boolean;
   backgroundMotion?: boolean;
   lyricLeadSeconds?: number;
@@ -417,6 +496,9 @@ export async function rerenderWorshipVideo(
   const { data } = await api.post<VideoJobStatus>('/videos/rerender', {
     analysis_id: req.analysisId,
     title: req.title,
+    title_en: req.titleEn,
+    collection_zh: req.collectionZh,
+    collection_en: req.collectionEn,
     composer: req.composer,
     background_ids: req.backgroundIds,
     extracted_background_paths: req.extractedBackgroundPaths,
@@ -424,6 +506,8 @@ export async function rerenderWorshipVideo(
     primary_font_size: req.primaryFontSize,
     secondary_font_size: req.secondaryFontSize,
     line_spacing_multiplier: req.lineSpacingMultiplier,
+    primary_line_spacing_multiplier: req.primaryLineSpacingMultiplier,
+    secondary_line_spacing_multiplier: req.secondaryLineSpacingMultiplier,
     show_page_numbers: req.showPageNumbers ?? false,
     background_motion: req.backgroundMotion ?? false,
     lyric_lead_seconds: req.lyricLeadSeconds ?? 0.5,
@@ -477,10 +561,16 @@ export async function createWorshipVideo(
   sheet?: { sessionId: string; cropFilenames: string[] },
   lyricLeadSeconds: number = 0.5,
   showEndSlide: boolean = false,
+  primaryLineSpacingMultiplier?: number,
+  secondaryLineSpacingMultiplier?: number,
+  titleMetadata?: TitleMetadata,
 ): Promise<VideoJobStatus> {
   const formData = new FormData();
   formData.append('analysis_id', analysisId);
   formData.append('title', title);
+  if (titleMetadata?.titleEn) formData.append('title_en', titleMetadata.titleEn);
+  if (titleMetadata?.collectionZh) formData.append('collection_zh', titleMetadata.collectionZh);
+  if (titleMetadata?.collectionEn) formData.append('collection_en', titleMetadata.collectionEn);
   formData.append('composer', composer);
   if (backgroundIds && backgroundIds.length > 0) {
     formData.append('background_ids', backgroundIds.join(','));
@@ -502,6 +592,12 @@ export async function createWorshipVideo(
   }
   if (lineSpacingMultiplier != null) {
     formData.append('line_spacing_multiplier', String(lineSpacingMultiplier));
+  }
+  if (primaryLineSpacingMultiplier != null) {
+    formData.append('primary_line_spacing_multiplier', String(primaryLineSpacingMultiplier));
+  }
+  if (secondaryLineSpacingMultiplier != null) {
+    formData.append('secondary_line_spacing_multiplier', String(secondaryLineSpacingMultiplier));
   }
   if (showPageNumbers) {
     formData.append('show_page_numbers', 'true');
@@ -528,6 +624,10 @@ export async function createWorshipVideo(
 export async function getVideoJob(jobId: string): Promise<VideoJobStatus> {
   const { data } = await api.get<VideoJobStatus>(`/videos/job/${jobId}`);
   return data;
+}
+
+export async function deleteWorshipAnalysis(analysisId: string): Promise<void> {
+  await api.delete(`/videos/analyses/${analysisId}`);
 }
 
 export function getVideoDownloadUrl(filename: string): string {

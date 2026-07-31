@@ -24,6 +24,7 @@ import string
 import subprocess
 import threading
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -461,6 +462,104 @@ class StanzaOccurrence:
     score: float  # 0..1 match quality
 
 
+def background_groups_for_occurrences(
+    occurrences: list[StanzaOccurrence],
+    stanzas: list[str] | None = None,
+) -> list[int]:
+    """Group each verse with all chorus pages that follow it.
+
+    Repeated lyric text is treated as refrain material even when the user has
+    pasted each repetition as a separate stanza. A new group begins at the
+    first non-repeated stanza after a refrain run. If no repeated text can be
+    identified, consecutive Verse+Chorus occurrences are paired. Every slide
+    parsed from one occurrence inherits that occurrence's group.
+    """
+    if not occurrences:
+        return []
+
+    cluster_representatives: list[str] = []
+    occurrence_clusters: list[int] = []
+    for occurrence in occurrences:
+        if stanzas and 0 <= occurrence.stanza_idx < len(stanzas):
+            normalized = "".join(_meaningful_chars(stanzas[occurrence.stanza_idx]))
+        else:
+            normalized = f"stanza:{occurrence.stanza_idx}"
+
+        cluster_idx: int | None = None
+        for idx, representative in enumerate(cluster_representatives):
+            if normalized == representative:
+                cluster_idx = idx
+                break
+            if normalized and representative:
+                length_ratio = min(len(normalized), len(representative)) / max(
+                    len(normalized), len(representative)
+                )
+                if length_ratio >= 0.8 and SequenceMatcher(
+                    a=normalized,
+                    b=representative,
+                    autojunk=False,
+                ).ratio() >= 0.88:
+                    cluster_idx = idx
+                    break
+        if cluster_idx is None:
+            cluster_idx = len(cluster_representatives)
+            cluster_representatives.append(normalized)
+        occurrence_clusters.append(cluster_idx)
+
+    counts = Counter(occurrence_clusters)
+    refrain_clusters = {idx for idx, count in counts.items() if count > 1}
+    if not refrain_clusters:
+        return [i // 2 for i in range(len(occurrences))]
+
+    groups: list[int] = []
+    current_group = 0
+    after_refrain = False
+    for i, cluster_idx in enumerate(occurrence_clusters):
+        is_refrain = cluster_idx in refrain_clusters
+        if i > 0 and after_refrain and not is_refrain:
+            current_group += 1
+        groups.append(current_group)
+        after_refrain = is_refrain
+    return groups
+
+
+def background_groups_for_chunks(
+    stanzas: list[str],
+    occurrences: list[StanzaOccurrence],
+    chunk_stanza_idx: list[int],
+) -> list[int]:
+    """Expand occurrence-level groups to cached lyric chunks.
+
+    This also migrates analyses created before section-aware backgrounds were
+    introduced, using only cached lyric metadata and never re-running Whisper.
+    """
+    if not chunk_stanza_idx:
+        return []
+    occurrence_groups = background_groups_for_occurrences(occurrences, stanzas)
+    if not occurrence_groups:
+        return [i // 2 for i in range(len(chunk_stanza_idx))]
+
+    occurrence_idx = 0
+    result: list[int] = []
+    for chunk_idx, stanza_idx in enumerate(chunk_stanza_idx):
+        if occurrences[occurrence_idx].stanza_idx != stanza_idx:
+            next_match = next(
+                (
+                    idx
+                    for idx in range(occurrence_idx + 1, len(occurrences))
+                    if occurrences[idx].stanza_idx == stanza_idx
+                ),
+                None,
+            )
+            if next_match is not None:
+                occurrence_idx = next_match
+            else:
+                result.append(chunk_idx // 2)
+                continue
+        result.append(occurrence_groups[occurrence_idx])
+    return result
+
+
 def identify_stanza_sequence(
     stanzas: list[str],
     whisper_words: list[WhisperWord],
@@ -801,11 +900,16 @@ def render_via_remotion(
     primary_font_size: int | None = None,
     secondary_font_size: int | None = None,
     line_spacing_multiplier: float | None = None,
+    primary_line_spacing_multiplier: float | None = None,
+    secondary_line_spacing_multiplier: float | None = None,
     show_page_numbers: bool = False,
     padding_style: str = "dark",
     sheet_crop_paths: list[Path] | None = None,
     background_motion: bool = False,
     show_end_slide: bool = False,
+    title_en: str = "",
+    collection_zh: str = "",
+    collection_en: str = "",
 ) -> None:
     """Copy assets into a per-job public dir, write props.json, run Remotion."""
     project_dir = settings.REMOTION_PROJECT_DIR
@@ -868,6 +972,9 @@ def render_via_remotion(
 
     props = {
         "title": title or "",
+        "titleEn": title_en or "",
+        "collectionZh": collection_zh or "",
+        "collectionEn": collection_en or "",
         "composer": composer or "",
         "language": language or "auto",
         "audioSrc": audio_name,
@@ -879,6 +986,8 @@ def render_via_remotion(
         "primaryFontSizePt": primary_font_size,
         "secondaryFontSizePt": secondary_font_size,
         "lineSpacingMultiplier": line_spacing_multiplier,
+        "primaryLineSpacingMultiplier": primary_line_spacing_multiplier,
+        "secondaryLineSpacingMultiplier": secondary_line_spacing_multiplier,
         "showPageNumbers": bool(show_page_numbers),
         "paddingStyle": padding_style,
         "backgroundMotion": bool(background_motion),
@@ -977,6 +1086,9 @@ class AudioPlan:
     occurrences: list[StanzaOccurrence]
     lyric_chunks: list[str]
     chunk_stanza_idx: list[int]
+    # Background group for every lyric chunk. Consecutive chunks in one
+    # Verse+Chorus section share the same value.
+    chunk_background_group: list[int] = field(default_factory=list)
     # Finalized per-slide timings. Populated by ``finalize_plan_timings``
     # during /analyze and cached on disk so the render step doesn't run the
     # SequenceMatcher alignment pass a second time.
@@ -1009,6 +1121,7 @@ def plan_to_dict(plan: AudioPlan) -> dict:
         ],
         "lyric_chunks": plan.lyric_chunks,
         "chunk_stanza_idx": plan.chunk_stanza_idx,
+        "chunk_background_group": plan.chunk_background_group,
         "timed": [
             {
                 "text": tc.text,
@@ -1025,7 +1138,7 @@ def plan_to_dict(plan: AudioPlan) -> dict:
 
 
 def plan_from_dict(d: dict) -> AudioPlan:
-    return AudioPlan(
+    plan = AudioPlan(
         whisper_words=[
             WhisperWord(text=w["text"], start=float(w["start"]), end=float(w["end"]))
             for w in d["whisper_words"]
@@ -1045,6 +1158,12 @@ def plan_from_dict(d: dict) -> AudioPlan:
         ],
         lyric_chunks=list(d["lyric_chunks"]),
         chunk_stanza_idx=list(d.get("chunk_stanza_idx", [])),
+        chunk_background_group=list(
+            d.get(
+                "chunk_background_group",
+                [i // 2 for i in range(len(d.get("lyric_chunks", [])))],
+            )
+        ),
         timed=[
             TimedChunk(
                 text=tc["text"],
@@ -1058,6 +1177,14 @@ def plan_from_dict(d: dict) -> AudioPlan:
         ],
         karaoke_units=list(d.get("karaoke_units", [])),
     )
+    migrated_groups = background_groups_for_chunks(
+        plan.stanzas,
+        plan.occurrences,
+        plan.chunk_stanza_idx,
+    )
+    if migrated_groups:
+        plan.chunk_background_group = migrated_groups
+    return plan
 
 
 def _clamp_intro_end(whisper_words: list[WhisperWord], audio_duration: float) -> float:
@@ -1108,8 +1235,13 @@ def analyze_audio(
 
     lyric_chunks: list[str] = []
     chunk_stanza_idx: list[int] = []
+    chunk_background_group: list[int] = []
+    occurrence_background_groups = background_groups_for_occurrences(
+        occurrences,
+        stanzas,
+    )
 
-    for occ in occurrences:
+    for occurrence_idx, occ in enumerate(occurrences):
         stanza_text = stanzas[occ.stanza_idx]
         for s in parse_lyrics(
             stanza_text,
@@ -1119,6 +1251,9 @@ def analyze_audio(
             if s.text.strip():
                 lyric_chunks.append(s.text)
                 chunk_stanza_idx.append(occ.stanza_idx)
+                chunk_background_group.append(
+                    occurrence_background_groups[occurrence_idx]
+                )
 
     if not lyric_chunks:
         # No stanza match — parse the whole text so the video still has
@@ -1131,6 +1266,7 @@ def analyze_audio(
             if s.text.strip():
                 lyric_chunks.append(s.text)
                 chunk_stanza_idx.append(-1)
+                chunk_background_group.append((len(lyric_chunks) - 1) // 2)
 
     return AudioPlan(
         whisper_words=words,
@@ -1141,6 +1277,7 @@ def analyze_audio(
         occurrences=occurrences,
         lyric_chunks=lyric_chunks,
         chunk_stanza_idx=chunk_stanza_idx,
+        chunk_background_group=chunk_background_group,
     )
 
 
@@ -1292,12 +1429,17 @@ def build_video_from_plan(
     primary_font_size: int | None = None,
     secondary_font_size: int | None = None,
     line_spacing_multiplier: float | None = None,
+    primary_line_spacing_multiplier: float | None = None,
+    secondary_line_spacing_multiplier: float | None = None,
     show_page_numbers: bool = False,
     padding_style: str = "dark",
     sheet_crop_paths: list[Path] | None = None,
     background_motion: bool = False,
     lyric_lead_seconds: float = DEFAULT_LYRIC_LEAD_SEC,
     show_end_slide: bool = False,
+    title_en: str = "",
+    collection_zh: str = "",
+    collection_en: str = "",
 ) -> tuple[Path, Path]:
     """Render MP4 + SRT from a pre-computed plan. Does NOT re-transcribe."""
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1329,6 +1471,9 @@ def build_video_from_plan(
     render_via_remotion(
         audio_path=audio_path,
         title=title,
+        title_en=title_en,
+        collection_zh=collection_zh,
+        collection_en=collection_en,
         composer=composer,
         language=plan.language,
         timed=timed,
@@ -1342,6 +1487,8 @@ def build_video_from_plan(
         primary_font_size=primary_font_size,
         secondary_font_size=secondary_font_size,
         line_spacing_multiplier=line_spacing_multiplier,
+        primary_line_spacing_multiplier=primary_line_spacing_multiplier,
+        secondary_line_spacing_multiplier=secondary_line_spacing_multiplier,
         show_page_numbers=show_page_numbers,
         padding_style=padding_style,
         sheet_crop_paths=sheet_crop_paths,

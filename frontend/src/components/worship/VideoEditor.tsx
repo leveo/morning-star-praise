@@ -18,19 +18,27 @@ import {
 } from '../../api/client';
 import type { BackgroundInfo } from '../../types';
 import { LazyVideoTile } from '../ppt/BackgroundPicker';
+import { usePersistedState } from '../../hooks/usePersistedState';
 
 interface Props {
   analysisId: string;
   title: string;
+  titleEn: string;
+  collectionZh: string;
+  collectionEn: string;
   composer: string;
   onTitleChange: (value: string) => void;
+  onTitleEnChange: (value: string) => void;
+  onCollectionZhChange: (value: string) => void;
+  onCollectionEnChange: (value: string) => void;
   onComposerChange: (value: string) => void;
   allBackgrounds: BackgroundInfo[];
   initialBackgroundPool: BackgroundInfo[];
   karaokeMode: boolean;
   primaryFontSize?: number;
   secondaryFontSize?: number;
-  lineSpacingMultiplier?: number;
+  primaryLineSpacingMultiplier?: number;
+  secondaryLineSpacingMultiplier?: number;
   showPageNumbers: boolean;
   backgroundMotion: boolean;
   lyricLeadSeconds: number;
@@ -120,15 +128,22 @@ function shiftedUnits(
 export default function VideoEditor({
   analysisId,
   title,
+  titleEn,
+  collectionZh,
+  collectionEn,
   composer,
   onTitleChange,
+  onTitleEnChange,
+  onCollectionZhChange,
+  onCollectionEnChange,
   onComposerChange,
   allBackgrounds,
   initialBackgroundPool,
   karaokeMode,
   primaryFontSize,
   secondaryFontSize,
-  lineSpacingMultiplier,
+  primaryLineSpacingMultiplier,
+  secondaryLineSpacingMultiplier,
   showPageNumbers,
   backgroundMotion,
   lyricLeadSeconds,
@@ -143,8 +158,14 @@ export default function VideoEditor({
 }: Props) {
   const [plan, setPlan] = useState<WorshipPlanResponse | null>(null);
   const [loadError, setLoadError] = useState('');
-  const [timingEdits, setTimingEdits] = useState<Record<number, TimingEdit>>({});
-  const [bgOverrides, setBgOverrides] = useState<Record<number, number>>({});
+  const [timingEdits, setTimingEdits] = usePersistedState<Record<number, TimingEdit>>(
+    `worshipVideo.timingEdits.${analysisId}`,
+    {},
+  );
+  const [bgOverrides, setBgOverrides] = usePersistedState<Record<number, number>>(
+    `worshipVideo.bgOverrides.${analysisId}`,
+    {},
+  );
   const [bgPickerOpen, setBgPickerOpen] = useState<number | null>(null);
   const [bgMediaFilter, setBgMediaFilter] = useState<BackgroundMediaFilter>('all');
   const [bgSearch, setBgSearch] = useState('');
@@ -208,9 +229,10 @@ export default function VideoEditor({
         if (bg) return bg.url;
       }
       if (initialBackgroundPool.length === 0) return null;
-      return initialBackgroundPool[Math.floor(i / 2) % initialBackgroundPool.length].url;
+      const groupIndex = plan?.plan.chunk_background_group?.[i] ?? Math.floor(i / 2);
+      return initialBackgroundPool[groupIndex % initialBackgroundPool.length].url;
     };
-  }, [bgOverrides, allBackgrounds, initialBackgroundPool]);
+  }, [bgOverrides, allBackgrounds, initialBackgroundPool, plan]);
 
   const titleBackgroundUrl = useMemo(() => {
     const overrideId = bgOverrides[-1];
@@ -237,6 +259,9 @@ export default function VideoEditor({
     if (!plan) return null;
     return {
       title,
+      titleEn,
+      collectionZh,
+      collectionEn,
       composer,
       language: plan.plan.language,
       audioSrc: plan.audio_url,
@@ -261,7 +286,8 @@ export default function VideoEditor({
       karaokeMode,
       primaryFontSizePt: primaryFontSize ?? null,
       secondaryFontSizePt: secondaryFontSize ?? null,
-      lineSpacingMultiplier: lineSpacingMultiplier ?? null,
+      primaryLineSpacingMultiplier: primaryLineSpacingMultiplier ?? null,
+      secondaryLineSpacingMultiplier: secondaryLineSpacingMultiplier ?? null,
       showPageNumbers,
       paddingStyle,
       backgroundMotion,
@@ -271,6 +297,9 @@ export default function VideoEditor({
   }, [
     plan,
     title,
+    titleEn,
+    collectionZh,
+    collectionEn,
     composer,
     previewTimings,
     backgroundUrlForSlide,
@@ -279,7 +308,8 @@ export default function VideoEditor({
     karaokeMode,
     primaryFontSize,
     secondaryFontSize,
-    lineSpacingMultiplier,
+    primaryLineSpacingMultiplier,
+    secondaryLineSpacingMultiplier,
     showPageNumbers,
     paddingStyle,
     backgroundMotion,
@@ -320,13 +350,17 @@ export default function VideoEditor({
       const status = await rerenderWorshipVideo({
         analysisId,
         title,
+        titleEn,
+        collectionZh,
+        collectionEn,
         composer,
         backgroundIds: selectedBgIds.length > 0 ? selectedBgIds : undefined,
         extractedBackgroundPaths: extractedBgFilenames,
         karaokeMode,
         primaryFontSize,
         secondaryFontSize,
-        lineSpacingMultiplier,
+        primaryLineSpacingMultiplier,
+        secondaryLineSpacingMultiplier,
         showPageNumbers,
         backgroundMotion,
         lyricLeadSeconds,
@@ -446,7 +480,7 @@ export default function VideoEditor({
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="space-y-1">
-            <span className="text-xs text-slate-400">主标题</span>
+            <span className="text-xs text-slate-400">中文歌名</span>
             <textarea
               rows={2}
               value={title}
@@ -455,7 +489,34 @@ export default function VideoEditor({
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-slate-400">副标题 / 作词作曲</span>
+            <span className="text-xs text-slate-400">英文歌名</span>
+            <textarea
+              rows={2}
+              value={titleEn}
+              onChange={(event) => onTitleEnChange(event.target.value)}
+              className="w-full resize-y rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">中文诗集与编号</span>
+            <textarea
+              rows={2}
+              value={collectionZh}
+              onChange={(event) => onCollectionZhChange(event.target.value)}
+              className="w-full resize-y rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">英文诗集名</span>
+            <textarea
+              rows={2}
+              value={collectionEn}
+              onChange={(event) => onCollectionEnChange(event.target.value)}
+              className="w-full resize-y rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white"
+            />
+          </label>
+          <label className="space-y-1 md:col-span-2">
+            <span className="text-xs text-slate-400">作词 / 作曲（诗集信息为空时显示）</span>
             <textarea
               rows={2}
               value={composer}

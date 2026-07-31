@@ -1,14 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Leo Song
+import { useCallback, useEffect } from 'react';
 import { usePersistedState } from './usePersistedState';
 
 export type UILanguage = 'zh' | 'en';
+
+const UI_LANGUAGE_EVENT = 'app:ui-language-change';
 
 /** UI language for the menu bar, footer, and legal pages. Defaults to
  *  Chinese and is persisted across tab switches / reloads. The value is
  *  independent of the song-language controls inside each page. */
 export function useUILanguage() {
-  return usePersistedState<UILanguage>('app.uiLanguage', 'zh');
+  const [language, setStoredLanguage] = usePersistedState<UILanguage>('app.uiLanguage', 'zh');
+
+  useEffect(() => {
+    const syncLanguage = (event: Event) => {
+      const next = (event as CustomEvent<UILanguage>).detail;
+      if (next === 'zh' || next === 'en') setStoredLanguage(next);
+    };
+    window.addEventListener(UI_LANGUAGE_EVENT, syncLanguage);
+    return () => window.removeEventListener(UI_LANGUAGE_EVENT, syncLanguage);
+  }, [setStoredLanguage]);
+
+  const setLanguage = useCallback((next: UILanguage) => {
+    setStoredLanguage(next);
+    window.dispatchEvent(new CustomEvent<UILanguage>(UI_LANGUAGE_EVENT, { detail: next }));
+  }, [setStoredLanguage]);
+
+  return [language, setLanguage] as const;
 }
 
 export type ResourceEntry = {

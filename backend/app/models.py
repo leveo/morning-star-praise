@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Leo Song
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 PaddingStyle = Literal["dark", "light"]
 
@@ -27,8 +27,53 @@ class LyricsParseResponse(BaseModel):
     total_slides: int
 
 
+class DocxLyricsWarning(BaseModel):
+    code: str
+    message: str
+    severity: Literal["warning", "error"] = "warning"
+    section_id: str | None = None
+
+
+class DocxLyricsSection(BaseModel):
+    id: str
+    kind: Literal["verse", "chorus"]
+    number: int | None = None
+    zh_lines: list[str] = Field(default_factory=list)
+    en_lines: list[str] = Field(default_factory=list)
+
+
+class DocxLyricsImportResponse(BaseModel):
+    source_filename: str
+    output_filename: str
+    song_number: str
+    title_zh: str
+    title_en: str
+    collection_zh: str
+    collection_en: str
+    sections: list[DocxLyricsSection]
+    sequence: list[str]
+    primary_lyrics: str
+    secondary_lyrics: str
+    combined_lyrics: str
+    warnings: list[DocxLyricsWarning]
+    has_blocking_errors: bool
+
+
+class DocxLyricsExportRequest(BaseModel):
+    source_filename: str
+    song_number: str
+    title_zh: str
+    title_en: str
+    collection_zh: str
+    collection_en: str
+    sections: list[DocxLyricsSection]
+
+
 class PPTGenerateRequest(BaseModel):
     title: str
+    title_en: str = ""
+    collection_zh: str = ""
+    collection_en: str = ""
     composer: str = ""
     slides: list[SlideData]
     language: str = "en"

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Leo Song
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import BackgroundPicker from '../components/ppt/BackgroundPicker';
 import FontSettings from '../components/ppt/FontSettings';
 import SlideDeck from '../components/ppt/SlideDeck';
 import UsageBadge from '../components/shared/UsageBadge';
+import ClearCurrentButton from '../components/shared/ClearCurrentButton';
 import {
   parseLyrics,
   parseLyricsBilingual,
@@ -23,6 +24,11 @@ import { usePersistedState } from '../hooks/usePersistedState';
 import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import { useUsageTracker } from '../hooks/useUsageTracker';
 import type { SlideData } from '../types';
+import {
+  consumeSlidesHandoff,
+  readWordLyricsDraft,
+  wordLyricsDraftSignature,
+} from '../utils/wordLyricsHandoff';
 
 const SAMPLE_LYRICS = `Amazing grace how sweet the sound
 That saved a wretch like me
@@ -39,12 +45,34 @@ The hour I first believed`;
 // to match the secondary line count, then interleaves/stacks and chunks in one
 // pass — guaranteeing max_lines is respected and pairing stays aligned.
 
-export default function LyricsPage() {
+export default function SlidesPage() {
   const [uiLanguage] = useUILanguage();
   const t = UI_TEXT[uiLanguage];
   const tl = t.lyrics;
+  const titleLabels = uiLanguage === 'zh'
+    ? {
+        heading: '标题页信息',
+        titleZh: '中文歌名',
+        titleEn: '英文歌名',
+        collectionZh: '中文诗集与编号',
+        collectionEn: '英文诗集名',
+      }
+    : {
+        heading: 'Title slide information',
+        titleZh: 'Chinese title',
+        titleEn: 'English title',
+        collectionZh: 'Chinese collection and number',
+        collectionEn: 'English collection',
+      };
   // Inputs the user typed/toggled — persisted across tab switches.
   const [title, setTitle] = usePersistedState('lyrics.title', '');
+  const [titleEn, setTitleEn] = usePersistedState('lyrics.titleEn', '');
+  const [collectionZh, setCollectionZh] = usePersistedState('lyrics.collectionZh', '');
+  const [collectionEn, setCollectionEn] = usePersistedState('lyrics.collectionEn', '');
+  const [wordDraftSignature, setWordDraftSignature] = usePersistedState(
+    'lyrics.wordDraftSignature',
+    '',
+  );
   const [composer, setComposer] = usePersistedState('lyrics.composer', '');
   const [lyrics, setLyrics] = usePersistedState('lyrics.lyrics', '');
   const [language, setLanguage] = usePersistedState<'zh-hans' | 'zh-hant'>(
@@ -76,25 +104,85 @@ export default function LyricsPage() {
   const [showPageNumbers, setShowPageNumbers] = usePersistedState('lyrics.showPageNumbers', template.showPageNumbers);
   const [selectedBgIds, setSelectedBgIds] = usePersistedState<number[]>('lyrics.selectedBgIds', []);
 
-  // Transient / derived — reset on each visit. Generated filenames would
-  // get 404s after the 1-hour output cleanup anyway, so don't persist.
   const [translating, setTranslating] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [slides, setSlides] = useState<SlideData[]>([]);
-  const [preview, setPreview] = useState<{ text: string; background_url: string }[]>([]);
-  const [filename, setFilename] = useState('');
+  const [slides, setSlides] = usePersistedState<SlideData[]>('lyrics.slides', []);
+  const [preview, setPreview] = usePersistedState<{ text: string; background_url: string }[]>(
+    'lyrics.preview',
+    [],
+  );
+  const [filename, setFilename] = usePersistedState('lyrics.filename', '');
   const [error, setError] = useState('');
   const { sessionId, usage, refreshUsage } = useUsageTracker();
 
+  useEffect(() => {
+    const payload = consumeSlidesHandoff();
+    if (payload) {
+      setTitle(payload.title);
+      setTitleEn(payload.titleEn ?? '');
+      setCollectionZh(payload.collectionZh ?? '');
+      setCollectionEn(payload.collectionEn ?? '');
+      setLyrics(payload.primaryLyrics);
+      setTranslatedLyrics(payload.secondaryLyrics);
+      setAddTranslation(true);
+      setBilingualMode('stacked');
+      setLanguage('zh-hant');
+      setSlides([]);
+      setPreview([]);
+      setFilename('');
+      setError('');
+      const shared = readWordLyricsDraft();
+      if (shared) setWordDraftSignature(wordLyricsDraftSignature(shared));
+      return;
+    }
+
+    const shared = readWordLyricsDraft();
+    if (!shared) return;
+    const signature = wordLyricsDraftSignature(shared);
+    if (signature === wordDraftSignature) return;
+    if (!title.trim()) setTitle(shared.title);
+    if (!titleEn.trim()) setTitleEn(shared.titleEn);
+    if (!collectionZh.trim()) setCollectionZh(shared.collectionZh);
+    if (!collectionEn.trim()) setCollectionEn(shared.collectionEn);
+    if (!lyrics.trim()) setLyrics(shared.primaryLyrics);
+    if (!translatedLyrics.trim()) setTranslatedLyrics(shared.secondaryLyrics);
+    setWordDraftSignature(signature);
+    // Consume exactly once when the page mounts after a Word-lyrics handoff.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Sheet music state — optional; not persisted since uploads live in a
   // server-side session dir that expires with the 1h cleanup.
-  const [sheetSession, setSheetSession] = useState<string | null>(null);
-  const [sheetFilename, setSheetFilename] = useState<string>('');
-  const [sheetCrops, setSheetCrops] = useState<SheetCrop[]>([]);
+  const [sheetSession, setSheetSession] = usePersistedState<string | null>('lyrics.sheetSession', null);
+  const [sheetFilename, setSheetFilename] = usePersistedState('lyrics.sheetFilename', '');
+  const [sheetCrops, setSheetCrops] = usePersistedState<SheetCrop[]>('lyrics.sheetCrops', []);
   const [sheetUploading, setSheetUploading] = useState(false);
   const [sheetAnalyzing, setSheetAnalyzing] = useState(false);
   const [sheetError, setSheetError] = useState('');
   const ts = UI_TEXT[uiLanguage].sheet;
+
+  const handleClearCurrentContent = () => {
+    const shared = readWordLyricsDraft();
+    setWordDraftSignature(shared ? wordLyricsDraftSignature(shared) : '');
+    if (sheetSession) void deleteSheet(sheetSession).catch(() => {});
+    setTitle('');
+    setTitleEn('');
+    setCollectionZh('');
+    setCollectionEn('');
+    setComposer('');
+    setLyrics('');
+    setTranslatedLyrics('');
+    setAddTranslation(false);
+    setSlides([]);
+    setPreview([]);
+    setFilename('');
+    setSelectedBgIds([]);
+    setSheetSession(null);
+    setSheetFilename('');
+    setSheetCrops([]);
+    setError('');
+    setSheetError('');
+  };
 
   const handleSheetUpload = async (file: File) => {
     setSheetError('');
@@ -211,6 +299,7 @@ export default function LyricsPage() {
               cropNames: sheetCrops.map((c) => c.filename),
             }
           : undefined,
+        { titleEn, collectionZh, collectionEn },
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);
@@ -252,6 +341,7 @@ export default function LyricsPage() {
               cropNames: sheetCrops.map((c) => c.filename),
             }
           : undefined,
+        { titleEn, collectionZh, collectionEn },
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);
@@ -323,11 +413,18 @@ export default function LyricsPage() {
 
   return (
     <div className="space-y-8">
-      {/* Title + Composer + Language */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="md:col-span-2">
+      <section className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h3 className="text-sm font-semibold text-slate-200">{titleLabels.heading}</h3>
+          <ClearCurrentButton
+            onClick={handleClearCurrentContent}
+            disabled={loading || translating || sheetUploading || sheetAnalyzing}
+          />
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
-            {tl.songTitle}
+            {titleLabels.titleZh}
           </label>
           <input
             type="text"
@@ -337,6 +434,44 @@ export default function LyricsPage() {
             className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
           />
         </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            {titleLabels.titleEn}
+          </label>
+          <input
+            type="text"
+            value={titleEn}
+            onChange={(e) => setTitleEn(e.target.value)}
+            placeholder="I Am Coming, Lord"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            {titleLabels.collectionZh}
+          </label>
+          <input
+            type="text"
+            value={collectionZh}
+            onChange={(e) => setCollectionZh(e.target.value)}
+            placeholder="教會聖詩 #450"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            {titleLabels.collectionEn}
+          </label>
+          <input
+            type="text"
+            value={collectionEn}
+            onChange={(e) => setCollectionEn(e.target.value)}
+            placeholder="Hymn's for God's People"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
+          />
+        </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
             {tl.composer}
@@ -403,7 +538,8 @@ export default function LyricsPage() {
             </div>
           )}
         </div>
-      </div>
+        </div>
+      </section>
 
       {/* Lyrics Input */}
       <div>

@@ -244,7 +244,8 @@ def assign_backgrounds(
     id_to_path = {bg.id: settings.BACKGROUNDS_DIR / bg.filename for bg in all_bgs}
 
     if background_ids:
-        cycle_bgs = [bg for bg in all_bgs if bg.id in background_ids]
+        bg_by_id = {bg.id: bg for bg in all_bgs}
+        cycle_bgs = [bg_by_id[bg_id] for bg_id in background_ids if bg_id in bg_by_id]
         if not cycle_bgs:
             cycle_bgs = all_bgs
     else:

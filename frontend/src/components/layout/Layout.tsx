@@ -9,7 +9,8 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { path: '/', label: { zh: '歌词', en: 'Lyrics' } },
+  { path: '/lyrics', label: { zh: '歌词', en: 'Lyrics' } },
+  { path: '/slides', label: { zh: '幻灯片', en: 'Slides' } },
   { path: '/youtube', label: { zh: 'YouTube', en: 'YouTube' } },
   { path: '/ocr', label: { zh: '乐谱', en: 'Sheet Music' } },
   { path: '/worship-video', label: { zh: '视频', en: 'Video' } },
@@ -50,7 +51,7 @@ export default function Layout() {
     <div className="min-h-screen bg-slate-900">
       <header className="border-b border-slate-700 bg-slate-800/50 backdrop-blur-sm">
         <div className="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between gap-6">
-          <Link to="/" className="flex items-center gap-3 group">
+          <Link to="/lyrics" className="flex items-center gap-3 group">
             <img
               src="/logo.svg"
               alt="晨星赞美 Morning Star Praise"
@@ -65,7 +66,7 @@ export default function Layout() {
               </p>
             </div>
           </Link>
-          <nav className="flex gap-1">
+          <nav className="flex flex-wrap justify-end gap-1">
             {navItems.map((item) => (
               <Link
                 key={item.path}

@@ -129,6 +129,7 @@ class AnalyzedSlide(BaseModel):
     sung_end_sec: float
     lead_sec: float
     stanza_idx: int
+    background_group_idx: int
 
 
 class AnalyzedStanzaOccurrence(BaseModel):
@@ -148,6 +149,44 @@ class AnalyzeResponse(BaseModel):
 
 
 ANALYSIS_ROOT = settings.VIDEO_WORK_DIR / "analyses"
+DRAFT_MARKER = ".draft.json"
+
+
+def _draft_marker_path(analysis_dir: Path) -> Path:
+    return analysis_dir / DRAFT_MARKER
+
+
+def _read_draft_outputs(analysis_dir: Path) -> set[str]:
+    try:
+        payload = json.loads(_draft_marker_path(analysis_dir).read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, OSError):
+        return set()
+    return {
+        Path(name).name
+        for name in payload.get("outputs", [])
+        if isinstance(name, str) and Path(name).name == name
+    }
+
+
+def _write_draft_outputs(analysis_dir: Path, outputs: set[str]) -> None:
+    _draft_marker_path(analysis_dir).write_text(
+        json.dumps({"outputs": sorted(outputs)}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def referenced_draft_artifacts() -> tuple[set[str], set[str]]:
+    """Return outputs and analyses explicitly retained by browser drafts."""
+    files: set[str] = set()
+    analyses: set[str] = set()
+    if not ANALYSIS_ROOT.exists():
+        return files, analyses
+    for analysis_dir in ANALYSIS_ROOT.iterdir():
+        if not analysis_dir.is_dir() or not _draft_marker_path(analysis_dir).is_file():
+            continue
+        analyses.add(analysis_dir.name)
+        files.update(_read_draft_outputs(analysis_dir))
+    return files, analyses
 
 
 @dataclass(slots=True)
@@ -163,6 +202,9 @@ class CachedAnalysis:
 class JobSpec:
     """Everything a render job needs besides the cached analysis."""
     title: str
+    title_en: str
+    collection_zh: str
+    collection_en: str
     composer: str
     background_ids: list[int] | None
     extracted_bg_paths: list[Path] | None
@@ -171,6 +213,8 @@ class JobSpec:
     primary_font_size: int | None
     secondary_font_size: int | None
     line_spacing_multiplier: float | None
+    primary_line_spacing_multiplier: float | None
+    secondary_line_spacing_multiplier: float | None
     show_page_numbers: bool
     background_motion: bool
     lyric_lead_seconds: float
@@ -250,13 +294,25 @@ def _progress_cb(job_id: str):
     return _cb
 
 
-def _paired_background_paths(
+def _grouped_background_paths(
     num_lyric_slides: int,
+    background_group_indices: list[int] | None,
     background_ids: list[int] | None,
     extracted_bg_paths: list[Path] | None,
 ) -> list[Path | None]:
-    """Return title + lyric backgrounds, repeating each lyric background twice."""
-    group_count = max(1, (num_lyric_slides + 1) // 2)
+    """Return title + lyric backgrounds using the analyzed section groups."""
+    raw_indices = (
+        background_group_indices
+        if background_group_indices and len(background_group_indices) == num_lyric_slides
+        else [i // 2 for i in range(num_lyric_slides)]
+    )
+    normalized: dict[int, int] = {}
+    slide_groups: list[int] = []
+    for raw in raw_indices:
+        if raw not in normalized:
+            normalized[raw] = len(normalized)
+        slide_groups.append(normalized[raw])
+    group_count = max(1, len(normalized))
     if extracted_bg_paths:
         groups: list[Path | None] = [
             extracted_bg_paths[i % len(extracted_bg_paths)]
@@ -267,7 +323,7 @@ def _paired_background_paths(
             num_slides=group_count,
             background_ids=background_ids,
         )
-    content = [groups[(i // 2) % len(groups)] for i in range(num_lyric_slides)]
+    content = [groups[group_idx % len(groups)] for group_idx in slide_groups]
     return [content[0], *content]
 
 
@@ -277,8 +333,9 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
         if not plan.lyric_chunks:
             raise ValueError("Analysis has no slides — re-run Analyze Audio")
 
-        bg_paths = _paired_background_paths(
+        bg_paths = _grouped_background_paths(
             num_lyric_slides=len(plan.lyric_chunks),
+            background_group_indices=plan.chunk_background_group,
             background_ids=spec.background_ids,
             extracted_bg_paths=spec.extracted_bg_paths,
         )
@@ -297,6 +354,9 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             audio_path=cached.audio_path,
             plan=plan,
             title=spec.title,
+            title_en=spec.title_en,
+            collection_zh=spec.collection_zh,
+            collection_en=spec.collection_en,
             composer=spec.composer,
             background_paths=bg_paths,
             output_dir=settings.OUTPUT_DIR,
@@ -307,6 +367,8 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             primary_font_size=spec.primary_font_size,
             secondary_font_size=spec.secondary_font_size,
             line_spacing_multiplier=spec.line_spacing_multiplier,
+            primary_line_spacing_multiplier=spec.primary_line_spacing_multiplier,
+            secondary_line_spacing_multiplier=spec.secondary_line_spacing_multiplier,
             show_page_numbers=spec.show_page_numbers,
             padding_style=spec.padding_style,
             sheet_crop_paths=spec.sheet_crop_paths,
@@ -323,6 +385,9 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             video_filename=video_path.name,
             srt_filename=srt_path.name,
         )
+        draft_outputs = _read_draft_outputs(cached.work_dir)
+        draft_outputs.update({video_path.name, srt_path.name})
+        _write_draft_outputs(cached.work_dir, draft_outputs)
 
         if spec.library_snapshot is not None:
             from app.services import library_service
@@ -383,6 +448,10 @@ def _analyze_sync(
         timed_chunks=timed,
     )
     stanza_idx_by_chunk = plan.chunk_stanza_idx or [-1] * len(plan.lyric_chunks)
+    background_group_by_chunk = (
+        plan.chunk_background_group
+        or [i // 2 for i in range(len(plan.lyric_chunks))]
+    )
 
     slides_payload: list[AnalyzedSlide] = []
     for i, tc in enumerate(timed):
@@ -399,6 +468,11 @@ def _analyze_sync(
                 ),
                 lead_sec=float(tc.lead),
                 stanza_idx=int(stanza_idx_by_chunk[i]) if i < len(stanza_idx_by_chunk) else -1,
+                background_group_idx=(
+                    int(background_group_by_chunk[i])
+                    if i < len(background_group_by_chunk)
+                    else i // 2
+                ),
             )
         )
 
@@ -410,6 +484,7 @@ def _analyze_sync(
     (analysis_dir / "plan.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )
+    _write_draft_outputs(analysis_dir, set())
 
     return AnalyzeResponse(
         analysis_id=analysis_dir.name,
@@ -480,10 +555,35 @@ async def analyze_audio_endpoint(
     return response
 
 
+@router.delete("/analyses/{analysis_id}")
+def clear_analysis_draft(analysis_id: str):
+    analysis_dir = _analysis_dir(analysis_id)
+    if not analysis_dir.exists():
+        return {"cleared": True}
+
+    from app.services import library_service
+
+    protected_files, protected_analyses = library_service.referenced_artifacts()
+    draft_outputs = _read_draft_outputs(analysis_dir)
+    for filename in draft_outputs - protected_files:
+        output_path = (settings.OUTPUT_DIR / filename).resolve()
+        if output_path.is_relative_to(settings.OUTPUT_DIR.resolve()):
+            output_path.unlink(missing_ok=True)
+
+    if analysis_id in protected_analyses:
+        _draft_marker_path(analysis_dir).unlink(missing_ok=True)
+    else:
+        shutil.rmtree(analysis_dir, ignore_errors=True)
+    return {"cleared": True}
+
+
 @router.post("/create", response_model=VideoJobResponse)
 async def create_video(
     analysis_id: str = Form(...),
     title: str = Form(""),
+    title_en: str = Form(""),
+    collection_zh: str = Form(""),
+    collection_en: str = Form(""),
     composer: str = Form(""),
     background_ids: str = Form(""),
     extracted_background_paths: str = Form(""),
@@ -491,6 +591,8 @@ async def create_video(
     primary_font_size: int | None = Form(None),
     secondary_font_size: int | None = Form(None),
     line_spacing_multiplier: float | None = Form(None),
+    primary_line_spacing_multiplier: float | None = Form(None),
+    secondary_line_spacing_multiplier: float | None = Form(None),
     show_page_numbers: bool = Form(False),
     background_motion: bool = Form(False),
     lyric_lead_seconds: float = Form(video_service.DEFAULT_LYRIC_LEAD_SEC),
@@ -542,6 +644,9 @@ async def create_video(
 
     spec = JobSpec(
         title=title,
+        title_en=title_en,
+        collection_zh=collection_zh,
+        collection_en=collection_en,
         composer=composer,
         background_ids=bg_ids,
         extracted_bg_paths=extracted_bg_paths,
@@ -550,6 +655,16 @@ async def create_video(
         primary_font_size=primary_font_size,
         secondary_font_size=secondary_font_size,
         line_spacing_multiplier=line_spacing_multiplier,
+        primary_line_spacing_multiplier=(
+            primary_line_spacing_multiplier
+            if primary_line_spacing_multiplier is not None
+            else line_spacing_multiplier
+        ),
+        secondary_line_spacing_multiplier=(
+            secondary_line_spacing_multiplier
+            if secondary_line_spacing_multiplier is not None
+            else line_spacing_multiplier
+        ),
         show_page_numbers=show_page_numbers,
         background_motion=background_motion,
         lyric_lead_seconds=max(0.0, min(float(lyric_lead_seconds), 30.0)),
@@ -722,6 +837,9 @@ class BackgroundOverride(BaseModel):
 class RerenderRequest(BaseModel):
     analysis_id: str
     title: str = ""
+    title_en: str = ""
+    collection_zh: str = ""
+    collection_en: str = ""
     composer: str = ""
     background_ids: list[int] | None = None
     extracted_background_paths: list[str] | None = None
@@ -729,6 +847,8 @@ class RerenderRequest(BaseModel):
     primary_font_size: int | None = None
     secondary_font_size: int | None = None
     line_spacing_multiplier: float | None = None
+    primary_line_spacing_multiplier: float | None = None
+    secondary_line_spacing_multiplier: float | None = None
     show_page_numbers: bool = False
     background_motion: bool = False
     lyric_lead_seconds: float = video_service.DEFAULT_LYRIC_LEAD_SEC
@@ -795,6 +915,9 @@ async def rerender_video(req: RerenderRequest):
 
     spec = JobSpec(
         title=req.title,
+        title_en=req.title_en,
+        collection_zh=req.collection_zh,
+        collection_en=req.collection_en,
         composer=req.composer,
         background_ids=req.background_ids,
         extracted_bg_paths=extracted_bg_paths,
@@ -803,6 +926,16 @@ async def rerender_video(req: RerenderRequest):
         primary_font_size=req.primary_font_size,
         secondary_font_size=req.secondary_font_size,
         line_spacing_multiplier=req.line_spacing_multiplier,
+        primary_line_spacing_multiplier=(
+            req.primary_line_spacing_multiplier
+            if req.primary_line_spacing_multiplier is not None
+            else req.line_spacing_multiplier
+        ),
+        secondary_line_spacing_multiplier=(
+            req.secondary_line_spacing_multiplier
+            if req.secondary_line_spacing_multiplier is not None
+            else req.line_spacing_multiplier
+        ),
         show_page_numbers=req.show_page_numbers,
         background_motion=req.background_motion,
         lyric_lead_seconds=max(0.0, min(float(req.lyric_lead_seconds), 30.0)),

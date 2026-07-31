@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Leo Song
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import Layout from './components/layout/Layout';
-import LyricsPage from './pages/LyricsPage';
+import SlidesPage from './pages/SlidesPage';
 import YouTubePage from './pages/YouTubePage';
 import OcrPage from './pages/OcrPage';
 import SongsLibraryPage from './pages/SongsLibraryPage';
@@ -11,6 +11,7 @@ import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
 import AboutPage from './pages/AboutPage';
 import WorshipVideoPage from './pages/WorshipVideoPage';
+import WordLyricsPage from './pages/WordLyricsPage';
 import './index.css';
 
 function App() {
@@ -18,7 +19,9 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<LyricsPage />} />
+          <Route index element={<Navigate to="/lyrics" replace />} />
+          <Route path="lyrics" element={<WordLyricsPage />} />
+          <Route path="slides" element={<SlidesPage />} />
           <Route path="youtube" element={<YouTubePage />} />
           <Route path="ocr" element={<OcrPage />} />
           <Route path="worship-video" element={<WorshipVideoPage />} />
