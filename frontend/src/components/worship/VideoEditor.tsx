@@ -2,7 +2,11 @@
 // Copyright (C) 2026 Leo Song
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
-import { WorshipVideo, type WorshipVideoProps } from '@remotion-composition/WorshipVideo';
+import {
+  END_SLIDE_DURATION_SEC,
+  WorshipVideo,
+  type WorshipVideoProps,
+} from '@remotion-composition/WorshipVideo';
 import {
   getWorshipPlan,
   rerenderWorshipVideo,
@@ -19,6 +23,8 @@ interface Props {
   analysisId: string;
   title: string;
   composer: string;
+  onTitleChange: (value: string) => void;
+  onComposerChange: (value: string) => void;
   allBackgrounds: BackgroundInfo[];
   initialBackgroundPool: BackgroundInfo[];
   karaokeMode: boolean;
@@ -27,6 +33,8 @@ interface Props {
   lineSpacingMultiplier?: number;
   showPageNumbers: boolean;
   backgroundMotion: boolean;
+  lyricLeadSeconds: number;
+  showEndSlide: boolean;
   paddingStyle: 'dark' | 'light';
   selectedBgIds: number[];
   extractedBgFilenames?: string[];
@@ -37,11 +45,9 @@ interface Props {
 }
 
 const FPS = 30;
-const NORMAL_LEAD_SEC = 0.5;
-const LONG_GAP_THRESHOLD_SEC = 8;
-const LONG_GAP_LEAD_SEC = 5;
 
 type TimingEdit = { sungStart: number };
+type BackgroundMediaFilter = 'all' | 'image' | 'video';
 type PlanTimed = WorshipPlanResponse['plan']['timed'][number];
 type ApiError = { response?: { data?: { detail?: string } } };
 
@@ -56,7 +62,9 @@ function derivePreviewTimings(
   timed: PlanTimed[],
   edits: Record<number, TimingEdit>,
   audioDuration: number,
+  leadSeconds: number,
 ): PreviewTiming[] {
+  const lead = Math.max(0, Math.min(leadSeconds, 30));
   let previousDisplayStart = -0.1;
   const derived = timed.map((tc, i) => {
     const originalSungStart = tc.sung_start ?? tc.start;
@@ -74,19 +82,6 @@ function derivePreviewTimings(
         Math.min(originalSungEnd + delta, audioDuration),
       ),
     );
-
-    let lead = NORMAL_LEAD_SEC;
-    if (i > 0) {
-      const previous = timed[i - 1];
-      const previousOriginalStart = previous.sung_start ?? previous.start;
-      const previousOriginalEnd = previous.sung_end ?? previous.end;
-      const previousDelta =
-        (edits[i - 1]?.sungStart ?? previousOriginalStart) - previousOriginalStart;
-      const previousSungEnd = previousOriginalEnd + previousDelta;
-      if (sungStart - previousSungEnd > LONG_GAP_THRESHOLD_SEC) {
-        lead = LONG_GAP_LEAD_SEC;
-      }
-    }
 
     let displayStart = Math.max(0, sungStart - lead);
     displayStart = Math.max(displayStart, previousDisplayStart + 0.1);
@@ -126,6 +121,8 @@ export default function VideoEditor({
   analysisId,
   title,
   composer,
+  onTitleChange,
+  onComposerChange,
   allBackgrounds,
   initialBackgroundPool,
   karaokeMode,
@@ -134,6 +131,8 @@ export default function VideoEditor({
   lineSpacingMultiplier,
   showPageNumbers,
   backgroundMotion,
+  lyricLeadSeconds,
+  showEndSlide,
   paddingStyle,
   selectedBgIds,
   extractedBgFilenames,
@@ -147,10 +146,11 @@ export default function VideoEditor({
   const [timingEdits, setTimingEdits] = useState<Record<number, TimingEdit>>({});
   const [bgOverrides, setBgOverrides] = useState<Record<number, number>>({});
   const [bgPickerOpen, setBgPickerOpen] = useState<number | null>(null);
+  const [bgMediaFilter, setBgMediaFilter] = useState<BackgroundMediaFilter>('all');
+  const [bgSearch, setBgSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [job, setJob] = useState<VideoJobStatus | null>(null);
   const playerRef = useRef<PlayerRef>(null);
-  const bgPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,12 +167,6 @@ export default function VideoEditor({
       cancelled = true;
     };
   }, [analysisId]);
-
-  useEffect(() => {
-    if (bgPickerOpen !== null && bgPickerRef.current) {
-      bgPickerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, [bgPickerOpen]);
 
   const jobId = job?.job_id;
   const shouldPoll =
@@ -202,8 +196,9 @@ export default function VideoEditor({
       plan.plan.timed,
       timingEdits,
       plan.plan.audio_duration,
+      lyricLeadSeconds,
     );
-  }, [plan, timingEdits]);
+  }, [plan, timingEdits, lyricLeadSeconds]);
 
   const backgroundUrlForSlide = useMemo(() => {
     return (i: number): string | null => {
@@ -213,10 +208,30 @@ export default function VideoEditor({
         if (bg) return bg.url;
       }
       if (initialBackgroundPool.length === 0) return null;
-      // Slot zero belongs to the title page in the backend renderer.
-      return initialBackgroundPool[(i + 1) % initialBackgroundPool.length].url;
+      return initialBackgroundPool[Math.floor(i / 2) % initialBackgroundPool.length].url;
     };
   }, [bgOverrides, allBackgrounds, initialBackgroundPool]);
+
+  const titleBackgroundUrl = useMemo(() => {
+    const overrideId = bgOverrides[-1];
+    if (overrideId != null) {
+      const bg = allBackgrounds.find((item) => item.id === overrideId);
+      if (bg) return bg.url;
+    }
+    return backgroundUrlForSlide(0);
+  }, [bgOverrides, allBackgrounds, backgroundUrlForSlide]);
+
+  const filteredBackgrounds = useMemo(() => {
+    const query = bgSearch.trim().toLocaleLowerCase();
+    return allBackgrounds.filter((bg) => {
+      const mediaType = bg.media_type === 'video' ? 'video' : 'image';
+      if (bgMediaFilter !== 'all' && mediaType !== bgMediaFilter) return false;
+      if (!query) return true;
+      return `${bg.name} ${bg.filename} ${(bg.tags ?? []).join(' ')}`
+        .toLocaleLowerCase()
+        .includes(query);
+    });
+  }, [allBackgrounds, bgMediaFilter, bgSearch]);
 
   const playerProps: WorshipVideoProps | null = useMemo(() => {
     if (!plan) return null;
@@ -242,8 +257,7 @@ export default function VideoEditor({
           tc.previewSungStart,
         ),
       })),
-      titleBackgroundSrc:
-        initialBackgroundPool.length > 0 ? initialBackgroundPool[0].url : null,
+      titleBackgroundSrc: titleBackgroundUrl,
       karaokeMode,
       primaryFontSizePt: primaryFontSize ?? null,
       secondaryFontSizePt: secondaryFontSize ?? null,
@@ -251,6 +265,8 @@ export default function VideoEditor({
       showPageNumbers,
       paddingStyle,
       backgroundMotion,
+      showEndSlide,
+      endSlideDurationSec: END_SLIDE_DURATION_SEC,
     };
   }, [
     plan,
@@ -259,7 +275,7 @@ export default function VideoEditor({
     previewTimings,
     backgroundUrlForSlide,
     sheet,
-    initialBackgroundPool,
+    titleBackgroundUrl,
     karaokeMode,
     primaryFontSize,
     secondaryFontSize,
@@ -267,11 +283,15 @@ export default function VideoEditor({
     showPageNumbers,
     paddingStyle,
     backgroundMotion,
+    showEndSlide,
   ]);
 
   const durationInFrames = Math.max(
     1,
-    Math.round((plan?.plan.audio_duration ?? 0) * FPS),
+    Math.round(
+      ((plan?.plan.audio_duration ?? 0)
+        + (showEndSlide ? END_SLIDE_DURATION_SEC : 0)) * FPS,
+    ),
   );
 
   const updateSungStart = (idx: number, value: number) => {
@@ -309,6 +329,8 @@ export default function VideoEditor({
         lineSpacingMultiplier,
         showPageNumbers,
         backgroundMotion,
+        lyricLeadSeconds,
+        showEndSlide,
         paddingStyle,
         timingOverrides: Object.entries(timingEdits).map(([idx, edit]) => ({
           idx: Number(idx),
@@ -370,8 +392,8 @@ export default function VideoEditor({
         <div>
           <h3 className="text-sm font-medium text-slate-200">渲染前歌词校准</h3>
           <p className="text-xs text-slate-500 mt-1">
-            播放音频，将播放指针停在歌词开唱处，再点“设为当前时间”。普通页面会提前
-            0.5 秒完整显示，超过 8 秒的长间奏会提前 5 秒显示下一页。
+            播放音频，将播放指针停在歌词开唱处，再点“设为当前时间”。所有歌词页会提前
+            {' '}{lyricLeadSeconds.toFixed(1)} 秒完整显示，逐页开唱时间仍可单独微调。
           </p>
         </div>
         <button
@@ -395,8 +417,53 @@ export default function VideoEditor({
           controls
           autoPlay={false}
           loop={false}
+          numberOfSharedAudioTags={1}
           style={{ width: '100%', aspectRatio: '16 / 9' }}
         />
+      </div>
+
+      <div
+        className={`rounded-lg border px-4 py-4 space-y-3 ${
+          bgOverrides[-1] != null
+            ? 'bg-amber-900/20 border-amber-700/60'
+            : 'bg-slate-900/40 border-slate-700'
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-medium text-slate-200">标题页</h4>
+            <p className="text-xs text-slate-500 mt-1">
+              中英混合标题会自动在语言交界处换行，也可以在主标题中手动换行。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setBgPickerOpen(-1)}
+            className="shrink-0 rounded bg-slate-700 px-3 py-1.5 text-xs text-gold-300 hover:bg-slate-600"
+          >
+            更换标题背景
+          </button>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">主标题</span>
+            <textarea
+              rows={2}
+              value={title}
+              onChange={(event) => onTitleChange(event.target.value)}
+              className="w-full resize-y rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">副标题 / 作词作曲</span>
+            <textarea
+              rows={2}
+              value={composer}
+              onChange={(event) => onComposerChange(event.target.value)}
+              className="w-full resize-y rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white"
+            />
+          </label>
+        </div>
       </div>
 
       <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-2">
@@ -452,7 +519,7 @@ export default function VideoEditor({
                 </button>
                 <span className="text-xs text-emerald-400">
                   画面 {tc.displayStart.toFixed(2)}s
-                  {tc.lead >= LONG_GAP_LEAD_SEC - 0.01 ? '（长间奏）' : ''}
+                  {' '}（提前 {tc.lead.toFixed(2)}s）
                 </span>
                 <button
                   type="button"
@@ -471,36 +538,102 @@ export default function VideoEditor({
       </div>
 
       {bgPickerOpen !== null && (
-        <div
-          ref={bgPickerRef}
-          className="rounded-lg border border-slate-700 bg-slate-900/60 p-3 space-y-2"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-300">
-            <span>为第 {bgPickerOpen + 1} 页选择背景</span>
-            <button
-              onClick={() => setBgPickerOpen(null)}
-              className="text-slate-400 hover:text-slate-200"
-            >
-              取消
-            </button>
-          </div>
-          <div className="grid grid-cols-4 md:grid-cols-6 gap-2 max-h-64 overflow-y-auto">
-            {allBackgrounds.map((bg) => (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
+          <div className="flex max-h-[88vh] w-full max-w-6xl flex-col rounded-xl border border-slate-600 bg-slate-900 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-700 px-5 py-4">
+              <div>
+                <h4 className="text-base font-medium text-white">
+                  {bgPickerOpen === -1
+                    ? '为标题页选择背景'
+                    : `为第 ${bgPickerOpen + 1} 页选择背景`}
+                </h4>
+                <p className="mt-1 text-xs text-slate-400">
+                  点击缩略图后立即应用到预览和正式视频。
+                </p>
+              </div>
               <button
-                key={bg.id}
-                onClick={() => {
-                  setBgOverrides((prev) => ({ ...prev, [bgPickerOpen]: bg.id }));
-                  setBgPickerOpen(null);
-                }}
-                className="aspect-video rounded overflow-hidden border border-slate-700 hover:border-gold-500"
+                type="button"
+                onClick={() => setBgPickerOpen(null)}
+                className="rounded px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white"
               >
-                {bg.media_type === 'video' ? (
-                  <LazyVideoTile src={bg.url} />
-                ) : (
-                  <img src={bg.url} alt="" className="w-full h-full object-cover" />
-                )}
+                取消
               </button>
-            ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 border-b border-slate-700 px-5 py-3">
+              <div className="flex rounded-lg bg-slate-800 p-1">
+                {([
+                  ['all', '全部'],
+                  ['image', '静态'],
+                  ['video', '动态'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setBgMediaFilter(value)}
+                    className={`rounded px-3 py-1.5 text-xs ${
+                      bgMediaFilter === value
+                        ? 'bg-gold-600 text-white'
+                        : 'text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="search"
+                value={bgSearch}
+                onChange={(event) => setBgSearch(event.target.value)}
+                placeholder="搜索名称或标签…"
+                className="min-w-56 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500"
+              />
+              <span className="text-xs text-slate-500">
+                {filteredBackgrounds.length} 张
+              </span>
+            </div>
+
+            <div className="overflow-y-auto p-5">
+              {filteredBackgrounds.length > 0 ? (
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+                  {filteredBackgrounds.map((bg) => (
+                    <button
+                      key={bg.id}
+                      type="button"
+                      onClick={() => {
+                        setBgOverrides((prev) => ({ ...prev, [bgPickerOpen]: bg.id }));
+                        setBgPickerOpen(null);
+                      }}
+                      className="group overflow-hidden rounded-lg border border-slate-700 bg-slate-950 text-left hover:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500"
+                    >
+                      <div className="aspect-video overflow-hidden bg-black">
+                        {bg.media_type === 'video' ? (
+                          <LazyVideoTile src={bg.url} />
+                        ) : (
+                          <img
+                            src={bg.url}
+                            alt=""
+                            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+                          />
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 px-3 py-2">
+                        <span className="truncate text-xs text-slate-200">
+                          {bg.name || bg.filename}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-slate-500">
+                          {bg.media_type === 'video' ? '动态' : '静态'}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-16 text-center text-sm text-slate-500">
+                  没有符合当前筛选条件的背景
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

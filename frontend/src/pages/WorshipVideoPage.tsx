@@ -28,7 +28,10 @@ import {
 import type { BackgroundInfo } from '../types';
 
 type LyricsSource = 'paste' | 'pptx' | 'image' | 'youtube';
-type ApiError = { response?: { data?: { detail?: string } } };
+type ApiError = {
+  code?: string;
+  response?: { data?: { detail?: string } };
+};
 
 const LYRICS_SOURCE_ORDER: LyricsSource[] = ['paste', 'pptx', 'image', 'youtube'];
 
@@ -69,6 +72,14 @@ export default function WorshipVideoPage() {
   const [karaokeMode, setKaraokeMode] = usePersistedState('worshipVideo.karaokeMode', false);
   const [backgroundMotion, setBackgroundMotion] = usePersistedState(
     'worshipVideo.backgroundMotion',
+    false,
+  );
+  const [lyricLeadSeconds, setLyricLeadSeconds] = usePersistedState(
+    'worshipVideo.lyricLeadSeconds',
+    0.5,
+  );
+  const [showEndSlide, setShowEndSlide] = usePersistedState(
+    'worshipVideo.showEndSlide',
     false,
   );
   const template = useTemplateDefaults();
@@ -131,6 +142,8 @@ export default function WorshipVideoPage() {
     usePptBackgrounds: boolean;
     karaokeMode: boolean;
     backgroundMotion: boolean;
+    lyricLeadSeconds: number;
+    showEndSlide: boolean;
     showPageNumbers: boolean;
     maxLines: number;
     maxWidth: number;
@@ -149,6 +162,8 @@ export default function WorshipVideoPage() {
     if (s.usePptBackgrounds != null) setUsePptBackgrounds(s.usePptBackgrounds);
     if (s.karaokeMode != null) setKaraokeMode(s.karaokeMode);
     if (s.backgroundMotion != null) setBackgroundMotion(s.backgroundMotion);
+    if (s.lyricLeadSeconds != null) setLyricLeadSeconds(s.lyricLeadSeconds);
+    if (s.showEndSlide != null) setShowEndSlide(s.showEndSlide);
     if (s.showPageNumbers != null) setShowPageNumbers(s.showPageNumbers);
     if (s.maxLines != null) setMaxLines(s.maxLines);
     if (s.maxWidth != null) setMaxWidth(s.maxWidth);
@@ -287,7 +302,11 @@ export default function WorshipVideoPage() {
         setSheetCrops([]);
       }
     } catch (err: unknown) {
-      const msg = (err as ApiError).response?.data?.detail || 'Failed to analyze audio';
+      const apiError = err as ApiError;
+      const msg = apiError.response?.data?.detail
+        || (apiError.code === 'ECONNABORTED'
+          ? 'Audio analysis timed out after 30 minutes. The backend may still be finishing the result.'
+          : 'Failed to analyze audio');
       setError(msg);
     } finally {
       setPreviewLoading(false);
@@ -344,7 +363,7 @@ export default function WorshipVideoPage() {
     i: number,
   ): { url: string; isVideo: boolean } | null => {
     if (currentBackgroundPool.length === 0) return null;
-    const bg = currentBackgroundPool[i % currentBackgroundPool.length];
+    const bg = currentBackgroundPool[Math.floor(i / 2) % currentBackgroundPool.length];
     return { url: bg.url, isVideo: bg.media_type === 'video' };
   };
 
@@ -614,6 +633,24 @@ export default function WorshipVideoPage() {
           setLineSpacing={setLineSpacing}
           showSecondary={false}
         />
+        <label className="flex items-center gap-2">
+          <span className="text-xs text-slate-400">歌词提前</span>
+          <input
+            type="number"
+            min="0"
+            max="30"
+            step="0.1"
+            value={lyricLeadSeconds}
+            onChange={(e) => {
+              const value = Number(e.target.value);
+              if (Number.isFinite(value)) {
+                setLyricLeadSeconds(Math.max(0, Math.min(value, 30)));
+              }
+            }}
+            className="w-20 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-white"
+          />
+          <span className="text-xs text-slate-500">秒完整显示</span>
+        </label>
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -643,6 +680,17 @@ export default function WorshipVideoPage() {
             className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
           />
           <span className="text-xs text-slate-400">静态背景轻微推拉</span>
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showEndSlide}
+            onChange={(e) => setShowEndSlide(e.target.checked)}
+            className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
+          />
+          <span className="text-xs text-slate-400">
+            添加尾页（标题内容，停留 3 秒）
+          </span>
         </label>
       </div>
 
@@ -888,6 +936,8 @@ export default function WorshipVideoPage() {
           analysisId={analysisId}
           title={title}
           composer={composer}
+          onTitleChange={setTitle}
+          onComposerChange={setComposer}
           allBackgrounds={allBackgrounds}
           initialBackgroundPool={currentBackgroundPool}
           karaokeMode={karaokeMode}
@@ -896,6 +946,8 @@ export default function WorshipVideoPage() {
           lineSpacingMultiplier={lineSpacing ?? undefined}
           showPageNumbers={showPageNumbers}
           backgroundMotion={backgroundMotion}
+          lyricLeadSeconds={lyricLeadSeconds}
+          showEndSlide={showEndSlide}
           paddingStyle={template.paddingStyle}
           selectedBgIds={selectedBgIds}
           extractedBgFilenames={
@@ -924,6 +976,8 @@ export default function WorshipVideoPage() {
             karaokeMode,
             showPageNumbers,
             backgroundMotion,
+            lyricLeadSeconds,
+            showEndSlide,
             maxLines,
             maxWidth,
             primaryFontSize,

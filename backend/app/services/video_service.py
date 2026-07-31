@@ -42,8 +42,6 @@ _whisper_model_lock = threading.Lock()
 _whisper_inference_lock = threading.Lock()
 
 DEFAULT_LYRIC_LEAD_SEC = 0.5
-LONG_INSTRUMENTAL_THRESHOLD_SEC = 8.0
-LONG_INSTRUMENTAL_LEAD_SEC = 5.0
 
 
 @dataclass
@@ -807,6 +805,7 @@ def render_via_remotion(
     padding_style: str = "dark",
     sheet_crop_paths: list[Path] | None = None,
     background_motion: bool = False,
+    show_end_slide: bool = False,
 ) -> None:
     """Copy assets into a per-job public dir, write props.json, run Remotion."""
     project_dir = settings.REMOTION_PROJECT_DIR
@@ -883,6 +882,7 @@ def render_via_remotion(
         "showPageNumbers": bool(show_page_numbers),
         "paddingStyle": padding_style,
         "backgroundMotion": bool(background_motion),
+        "showEndSlide": bool(show_end_slide),
     }
 
     props_path = work_dir / "props.json"
@@ -1187,19 +1187,15 @@ def _snap_slides_to_gaps(
 def apply_display_timing_rules(
     timed: list[TimedChunk],
     audio_duration: float,
+    lead_sec: float = DEFAULT_LYRIC_LEAD_SEC,
 ) -> list[TimedChunk]:
-    """Derive congregation-friendly display cues from sung lyric ranges.
-
-    Normal slides are fully visible 0.5 seconds before singing begins. When
-    the silence after the preceding slide exceeds eight seconds, the next
-    lyrics are shown five seconds early instead. The first slide always uses
-    the normal lead so a long introduction can keep the title visible.
-    """
+    """Make every lyric page fully visible ``lead_sec`` before it is sung."""
     if not timed:
         return timed
 
+    lead = max(0.0, min(float(lead_sec), 30.0))
     previous_display_start = -0.1
-    for i, tc in enumerate(timed):
+    for tc in timed:
         sung_start = float(tc.sung_start if tc.sung_start is not None else tc.start)
         sung_end = float(tc.sung_end if tc.sung_end is not None else tc.end)
         max_sung_start = max(audio_duration - 0.1, 0.0)
@@ -1208,17 +1204,6 @@ def apply_display_timing_rules(
             audio_duration,
             max(sung_start + 0.1, min(sung_end, audio_duration)),
         )
-
-        lead = DEFAULT_LYRIC_LEAD_SEC
-        if i > 0:
-            previous = timed[i - 1]
-            previous_sung_end = float(
-                previous.sung_end
-                if previous.sung_end is not None
-                else previous.end
-            )
-            if sung_start - previous_sung_end > LONG_INSTRUMENTAL_THRESHOLD_SEC:
-                lead = LONG_INSTRUMENTAL_LEAD_SEC
 
         display_start = max(0.0, sung_start - lead)
         display_start = max(display_start, previous_display_start + 0.1)
@@ -1239,6 +1224,7 @@ def apply_display_timing_rules(
 def apply_sung_start_overrides(
     plan: AudioPlan,
     overrides: dict[int, float],
+    lead_sec: float = DEFAULT_LYRIC_LEAD_SEC,
 ) -> list[TimedChunk]:
     """Apply editor cue changes and rebuild display boundaries."""
     timed = plan.timed
@@ -1259,7 +1245,7 @@ def apply_sung_start_overrides(
                 min(old_end + delta, plan.audio_duration),
             ),
         )
-    apply_display_timing_rules(timed, plan.audio_duration)
+    apply_display_timing_rules(timed, plan.audio_duration, lead_sec=lead_sec)
     plan.intro_end = timed[0].start if timed else 0.0
     plan.karaoke_units = []
     return timed
@@ -1268,6 +1254,7 @@ def apply_sung_start_overrides(
 def finalize_plan_timings(
     plan: AudioPlan,
     curve_cache: CharCurveCache | None = None,
+    lead_sec: float = DEFAULT_LYRIC_LEAD_SEC,
 ) -> list[TimedChunk]:
     """Run the char-alignment pass and normalize chunk boundaries.
 
@@ -1277,15 +1264,15 @@ def finalize_plan_timings(
     black background during silence gaps.
     """
     if plan.timed:
-        return plan.timed
-
-    timed = align_chunks_to_timeline(
-        plan.lyric_chunks, plan.whisper_words, plan.audio_duration,
-        intro_offset=plan.intro_end,
-        curve_cache=curve_cache,
-    )
-    _snap_slides_to_gaps(timed, plan.whisper_words)
-    apply_display_timing_rules(timed, plan.audio_duration)
+        timed = plan.timed
+    else:
+        timed = align_chunks_to_timeline(
+            plan.lyric_chunks, plan.whisper_words, plan.audio_duration,
+            intro_offset=plan.intro_end,
+            curve_cache=curve_cache,
+        )
+        _snap_slides_to_gaps(timed, plan.whisper_words)
+    apply_display_timing_rules(timed, plan.audio_duration, lead_sec=lead_sec)
     plan.intro_end = timed[0].start if timed else 0.0
     plan.timed = timed
     return timed
@@ -1309,13 +1296,19 @@ def build_video_from_plan(
     padding_style: str = "dark",
     sheet_crop_paths: list[Path] | None = None,
     background_motion: bool = False,
+    lyric_lead_seconds: float = DEFAULT_LYRIC_LEAD_SEC,
+    show_end_slide: bool = False,
 ) -> tuple[Path, Path]:
     """Render MP4 + SRT from a pre-computed plan. Does NOT re-transcribe."""
     work_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     curve_cache = CharCurveCache()
-    timed = finalize_plan_timings(plan, curve_cache=curve_cache)
+    timed = finalize_plan_timings(
+        plan,
+        curve_cache=curve_cache,
+        lead_sec=lyric_lead_seconds,
+    )
 
     karaoke_units: list[list[dict]] | None = None
     if karaoke_mode:
@@ -1353,6 +1346,7 @@ def build_video_from_plan(
         padding_style=padding_style,
         sheet_crop_paths=sheet_crop_paths,
         background_motion=background_motion,
+        show_end_slide=show_end_slide,
     )
 
     write_srt(timed, srt_path)

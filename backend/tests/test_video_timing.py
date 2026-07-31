@@ -32,31 +32,45 @@ def test_normal_slide_is_fully_visible_half_second_early():
     assert timed[1].end == pytest.approx(12.0)
 
 
-def test_long_instrumental_shows_next_slide_five_seconds_early():
+def test_custom_lead_applies_after_long_instrumental():
     timed = [_chunk("第一頁", 3.0, 5.0), _chunk("第二頁", 15.0, 17.0)]
 
-    video_service.apply_display_timing_rules(timed, audio_duration=20.0)
+    video_service.apply_display_timing_rules(
+        timed,
+        audio_duration=20.0,
+        lead_sec=1.2,
+    )
 
-    assert timed[1].start == pytest.approx(10.0)
-    assert timed[1].lead == pytest.approx(5.0)
+    assert timed[0].start == pytest.approx(1.8)
+    assert timed[1].start == pytest.approx(13.8)
+    assert timed[1].lead == pytest.approx(1.2)
 
 
-def test_eight_second_gap_still_uses_normal_lead():
+def test_zero_lead_makes_display_start_match_sung_start():
     timed = [_chunk("第一頁", 3.0, 5.0), _chunk("第二頁", 13.0, 15.0)]
 
-    video_service.apply_display_timing_rules(timed, audio_duration=18.0)
+    video_service.apply_display_timing_rules(
+        timed,
+        audio_duration=18.0,
+        lead_sec=0.0,
+    )
 
-    assert timed[1].start == pytest.approx(12.5)
-    assert timed[1].lead == pytest.approx(0.5)
+    assert timed[0].start == pytest.approx(3.0)
+    assert timed[1].start == pytest.approx(13.0)
+    assert timed[1].lead == pytest.approx(0.0)
 
 
-def test_first_slide_never_uses_long_intro_rule():
+def test_custom_lead_applies_to_first_slide():
     timed = [_chunk("第一頁", 20.0, 23.0)]
 
-    video_service.apply_display_timing_rules(timed, audio_duration=30.0)
+    video_service.apply_display_timing_rules(
+        timed,
+        audio_duration=30.0,
+        lead_sec=2.0,
+    )
 
-    assert timed[0].start == pytest.approx(19.5)
-    assert timed[0].lead == pytest.approx(0.5)
+    assert timed[0].start == pytest.approx(18.0)
+    assert timed[0].lead == pytest.approx(2.0)
 
 
 def test_display_starts_remain_non_negative_and_monotonic():
@@ -89,6 +103,31 @@ def test_sung_start_override_rebuilds_display_windows():
     assert plan.timed[1].sung_end == pytest.approx(10.2)
     assert plan.timed[1].start == pytest.approx(7.7)
     assert plan.intro_end == pytest.approx(2.5)
+
+
+def test_sung_start_override_preserves_custom_global_lead():
+    timed = [_chunk("第一頁", 3.0, 5.0), _chunk("第二頁", 7.0, 9.0)]
+    plan = video_service.AudioPlan(
+        whisper_words=[],
+        audio_duration=12.0,
+        intro_end=2.5,
+        language="zh",
+        stanzas=[],
+        occurrences=[],
+        lyric_chunks=["第一頁", "第二頁"],
+        chunk_stanza_idx=[0, 1],
+        timed=timed,
+    )
+
+    video_service.apply_sung_start_overrides(
+        plan,
+        {1: 8.2},
+        lead_sec=1.5,
+    )
+
+    assert plan.timed[1].sung_start == pytest.approx(8.2)
+    assert plan.timed[1].start == pytest.approx(6.7)
+    assert plan.timed[1].lead == pytest.approx(1.5)
 
 
 def test_sung_start_override_clamps_inside_audio():

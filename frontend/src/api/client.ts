@@ -402,6 +402,8 @@ export interface RerenderRequest {
   lineSpacingMultiplier?: number;
   showPageNumbers?: boolean;
   backgroundMotion?: boolean;
+  lyricLeadSeconds?: number;
+  showEndSlide?: boolean;
   paddingStyle?: 'dark' | 'light';
   timingOverrides?: { idx: number; sung_start_sec: number }[];
   backgroundOverrides?: { idx: number; background_id?: number }[];
@@ -424,6 +426,8 @@ export async function rerenderWorshipVideo(
     line_spacing_multiplier: req.lineSpacingMultiplier,
     show_page_numbers: req.showPageNumbers ?? false,
     background_motion: req.backgroundMotion ?? false,
+    lyric_lead_seconds: req.lyricLeadSeconds ?? 0.5,
+    show_end_slide: req.showEndSlide ?? false,
     padding_style: req.paddingStyle ?? 'dark',
     timing_overrides: req.timingOverrides ?? [],
     background_overrides: req.backgroundOverrides ?? [],
@@ -447,11 +451,11 @@ export async function analyzeWorshipAudio(
   formData.append('language', language);
   formData.append('max_lines_per_slide', String(maxLinesPerSlide));
   formData.append('max_width_per_row', String(maxWidthPerRow));
-  // Whisper transcription can take a while on long songs — give it headroom.
+  // CPU-only Whisper can take longer than ten minutes even for a short hymn.
   const { data } = await api.post<AnalyzeAudioResponse>(
     '/videos/analyze',
     formData,
-    { timeout: 600_000 }
+    { timeout: 1_800_000 }
   );
   return data;
 }
@@ -471,6 +475,8 @@ export async function createWorshipVideo(
   inputSnapshot?: Record<string, unknown>,
   paddingStyle: 'dark' | 'light' = 'dark',
   sheet?: { sessionId: string; cropFilenames: string[] },
+  lyricLeadSeconds: number = 0.5,
+  showEndSlide: boolean = false,
 ): Promise<VideoJobStatus> {
   const formData = new FormData();
   formData.append('analysis_id', analysisId);
@@ -502,6 +508,10 @@ export async function createWorshipVideo(
   }
   if (backgroundMotion) {
     formData.append('background_motion', 'true');
+  }
+  formData.append('lyric_lead_seconds', String(lyricLeadSeconds));
+  if (showEndSlide) {
+    formData.append('show_end_slide', 'true');
   }
   formData.append('padding_style', paddingStyle);
   if (inputSnapshot) {

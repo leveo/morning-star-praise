@@ -173,6 +173,8 @@ class JobSpec:
     line_spacing_multiplier: float | None
     show_page_numbers: bool
     background_motion: bool
+    lyric_lead_seconds: float
+    show_end_slide: bool
     padding_style: str = "dark"
     bg_path_overrides: dict[int, Path] | None = None
     # Renderer cycles these crops when fewer than chunks. None disables.
@@ -248,28 +250,48 @@ def _progress_cb(job_id: str):
     return _cb
 
 
+def _paired_background_paths(
+    num_lyric_slides: int,
+    background_ids: list[int] | None,
+    extracted_bg_paths: list[Path] | None,
+) -> list[Path | None]:
+    """Return title + lyric backgrounds, repeating each lyric background twice."""
+    group_count = max(1, (num_lyric_slides + 1) // 2)
+    if extracted_bg_paths:
+        groups: list[Path | None] = [
+            extracted_bg_paths[i % len(extracted_bg_paths)]
+            for i in range(group_count)
+        ]
+    else:
+        groups = assign_backgrounds(
+            num_slides=group_count,
+            background_ids=background_ids,
+        )
+    content = [groups[(i // 2) % len(groups)] for i in range(num_lyric_slides)]
+    return [content[0], *content]
+
+
 def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
     try:
         plan = cached.plan
         if not plan.lyric_chunks:
             raise ValueError("Analysis has no slides — re-run Analyze Audio")
 
-        num_bg_slots = len(plan.lyric_chunks) + 1
-        if spec.extracted_bg_paths:
-            bg_paths: list[Path | None] = [
-                spec.extracted_bg_paths[i % len(spec.extracted_bg_paths)]
-                for i in range(num_bg_slots)
-            ]
-        else:
-            bg_paths = assign_backgrounds(
-                num_slides=num_bg_slots,
-                background_ids=spec.background_ids,
-            )
+        bg_paths = _paired_background_paths(
+            num_lyric_slides=len(plan.lyric_chunks),
+            background_ids=spec.background_ids,
+            extracted_bg_paths=spec.extracted_bg_paths,
+        )
 
+        has_title_background_override = bool(
+            spec.bg_path_overrides and 0 in spec.bg_path_overrides
+        )
         if spec.bg_path_overrides:
             for idx, override_path in spec.bg_path_overrides.items():
                 if 0 <= idx < len(bg_paths):
                     bg_paths[idx] = override_path
+        if not has_title_background_override and len(bg_paths) > 1:
+            bg_paths[0] = bg_paths[1]
 
         video_path, srt_path = video_service.build_video_from_plan(
             audio_path=cached.audio_path,
@@ -289,6 +311,8 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             padding_style=spec.padding_style,
             sheet_crop_paths=spec.sheet_crop_paths,
             background_motion=spec.background_motion,
+            lyric_lead_seconds=spec.lyric_lead_seconds,
+            show_end_slide=spec.show_end_slide,
         )
 
         video_job_service.update_job(
@@ -469,6 +493,8 @@ async def create_video(
     line_spacing_multiplier: float | None = Form(None),
     show_page_numbers: bool = Form(False),
     background_motion: bool = Form(False),
+    lyric_lead_seconds: float = Form(video_service.DEFAULT_LYRIC_LEAD_SEC),
+    show_end_slide: bool = Form(False),
     padding_style: str = Form("dark"),
     input_snapshot: str = Form(""),
     sheet_session_id: str = Form(""),
@@ -526,6 +552,8 @@ async def create_video(
         line_spacing_multiplier=line_spacing_multiplier,
         show_page_numbers=show_page_numbers,
         background_motion=background_motion,
+        lyric_lead_seconds=max(0.0, min(float(lyric_lead_seconds), 30.0)),
+        show_end_slide=show_end_slide,
         padding_style=padding_style if padding_style in ("dark", "light") else "dark",
         sheet_crop_paths=sheet_crop_paths,
         analysis_id=analysis_id,
@@ -703,6 +731,8 @@ class RerenderRequest(BaseModel):
     line_spacing_multiplier: float | None = None
     show_page_numbers: bool = False
     background_motion: bool = False
+    lyric_lead_seconds: float = video_service.DEFAULT_LYRIC_LEAD_SEC
+    show_end_slide: bool = False
     padding_style: PaddingStyle = "dark"
     timing_overrides: list[TimingOverride] = []
     background_overrides: list[BackgroundOverride] = []
@@ -723,7 +753,11 @@ async def rerender_video(req: RerenderRequest):
                 requested = ov.start_sec
             if requested is not None:
                 sung_overrides[ov.idx] = float(requested)
-        video_service.apply_sung_start_overrides(cached.plan, sung_overrides)
+        video_service.apply_sung_start_overrides(
+            cached.plan,
+            sung_overrides,
+            lead_sec=req.lyric_lead_seconds,
+        )
         _save_cached_plan(cached)
 
     extracted_bg_paths: list[Path] | None = None
@@ -741,8 +775,8 @@ async def rerender_video(req: RerenderRequest):
         if resolved_sheet:
             sheet_crop_paths = resolved_sheet
 
-    # Editor's ``idx`` is the lyric chunk index (0..N-1). ``bg_paths`` index 0
-    # is the title slide, so chunk-level overrides shift by +1.
+    # Editor ``idx=-1`` targets the title; ``idx=0..N-1`` targets lyric chunks.
+    # ``bg_paths`` index 0 is the title, so every editor index shifts by +1.
     bg_path_overrides: dict[int, Path] | None = None
     override_ids = {ov.background_id for ov in req.background_overrides if ov.background_id is not None}
     if override_ids:
@@ -771,6 +805,8 @@ async def rerender_video(req: RerenderRequest):
         line_spacing_multiplier=req.line_spacing_multiplier,
         show_page_numbers=req.show_page_numbers,
         background_motion=req.background_motion,
+        lyric_lead_seconds=max(0.0, min(float(req.lyric_lead_seconds), 30.0)),
+        show_end_slide=req.show_end_slide,
         padding_style=req.padding_style,
         sheet_crop_paths=sheet_crop_paths,
         bg_path_overrides=bg_path_overrides,

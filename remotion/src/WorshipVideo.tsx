@@ -80,6 +80,8 @@ export const worshipVideoSchema = z.object({
   lineSpacingMultiplier: z.number().nullable().optional(),
   showPageNumbers: z.boolean().optional(),
   backgroundMotion: z.boolean().optional(),
+  showEndSlide: z.boolean().optional(),
+  endSlideDurationSec: z.number().optional(),
   // 'dark' = black semi-transparent overlay + white text (default);
   // 'light' = white semi-transparent overlay + black text.
   paddingStyle: z.enum(["dark", "light"]).optional(),
@@ -90,10 +92,27 @@ export type KaraokeUnit = z.infer<typeof unitSchema>;
 export type PaddingStyle = "dark" | "light";
 
 const KARAOKE_RAMP_SEC = 0.15;
+const SLIDE_FADE_SEC = 0.8;
+export const END_SLIDE_DURATION_SEC = 3;
 
 const hasChinese = (s: string) => /[\u4e00-\u9fff]/.test(s);
 
-const titleFontSize = (textLen: number): number => {
+const formatTitleText = (text: string): string => {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.includes("\n")) return trimmed;
+  const bilingual = trimmed.match(
+    /^(.+?[\u3400-\u9fff][^A-Za-z]*?)\s+([A-Za-z].*)$/,
+  );
+  return bilingual
+    ? `${bilingual[1].trim()}\n${bilingual[2].trim()}`
+    : trimmed;
+};
+
+const titleFontSize = (text: string): number => {
+  const textLen = Math.max(
+    0,
+    ...text.split("\n").map((line) => Array.from(line).length),
+  );
   if (textLen <= 4) return 192;
   if (textLen <= 8) return 168;
   if (textLen <= 12) return 144;
@@ -239,7 +258,7 @@ const Slide: React.FC<SlideProps> = ({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const fadeFrames = Math.max(1, Math.round(fps * 0.4));
+  const fadeFrames = Math.max(1, Math.round(fps * SLIDE_FADE_SEC));
   // Skip fade-in for the title slide so frame 0 of the MP4 (and its auto
   // poster/thumbnail) isn't a black frame from the opacity ramp.
   const opacity = isTitle
@@ -250,13 +269,14 @@ const Slide: React.FC<SlideProps> = ({
         extrapolateRight: "clamp",
       });
 
-  const isZh = language.startsWith("zh") || hasChinese(text);
+  const displayText = isTitle ? formatTitleText(text) : text;
+  const isZh = language.startsWith("zh") || hasChinese(displayText);
   const fontFamilyStack = isZh
     ? `${CJK_FONT_STACK}, ${interFamily}`
     : `${interFamily}, ${CJK_FONT_STACK}`;
 
   const primarySize = isTitle
-    ? titleFontSize(text.length)
+    ? titleFontSize(displayText)
     : primaryFontSizePt != null
       ? Math.round(primaryFontSizePt * PT_TO_PX)
       : isZh
@@ -267,7 +287,7 @@ const Slide: React.FC<SlideProps> = ({
     : Math.round(primarySize * 0.42);
   const primaryLineHeight = lineSpacingMultiplier ?? (isZh ? 1.5 : 1.3);
 
-  const lines = text.split("\n");
+  const lines = displayText.split("\n");
   const useKaraoke = !isTitle && Array.isArray(units) && units.length > 0;
   const absTimeSec = sequenceStartSec + frame / fps;
 
@@ -300,7 +320,12 @@ const Slide: React.FC<SlideProps> = ({
     <AbsoluteFill style={{ opacity }}>
       {backgroundSrc ? (
         bgIsVideo ? (
-          <Video src={resolveAssetUrl(backgroundSrc)} loop muted style={coverStyle} />
+          <Video
+            src={resolveAssetUrl(backgroundSrc)}
+            loop
+            muted
+            style={coverStyle}
+          />
         ) : (
           <Img
             src={resolveAssetUrl(backgroundSrc)}
@@ -413,6 +438,7 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
   composer,
   language,
   audioSrc,
+  audioDurationSec,
   introDurationSec,
   chunks,
   titleBackgroundSrc,
@@ -423,15 +449,29 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
   showPageNumbers = false,
   paddingStyle = "dark",
   backgroundMotion = false,
+  showEndSlide = false,
+  endSlideDurationSec = END_SLIDE_DURATION_SEC,
 }) => {
   const { fps } = useVideoConfig();
-  const fadeFrames = Math.max(1, Math.round(fps * 0.4));
+  const fadeFrames = Math.max(1, Math.round(fps * SLIDE_FADE_SEC));
 
   const introFrames = Math.max(1, Math.round(introDurationSec * fps));
+  const audioFrames = Math.max(1, Math.round(audioDurationSec * fps));
+  const endFrames = Math.max(1, Math.round(endSlideDurationSec * fps));
+  const endFrom = Math.max(0, audioFrames - fadeFrames);
+  const endText = [formatTitleText(title), composer.trim()]
+    .filter(Boolean)
+    .join("\n");
+  const endBackgroundSrc = chunks.length > 0
+    ? chunks[chunks.length - 1].backgroundSrc
+    : titleBackgroundSrc;
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000000" }}>
-      <Audio src={resolveAssetUrl(audioSrc)} />
+      <Audio
+        src={resolveAssetUrl(audioSrc)}
+        pauseWhenBuffering
+      />
 
       {/* Title slide */}
       <Sequence durationInFrames={introFrames} premountFor={fps}>
@@ -449,8 +489,8 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
         />
       </Sequence>
 
-      {/* Content slides — each starts `fadeFrames` early so its fade-in
-          overlaps the end of the previous slide for a smooth crossfade. */}
+      {/* Content slides start early so chunk.startSec remains the exact frame
+          where the incoming page has finished fading to full opacity. */}
       {chunks.map((chunk, i) => {
         const nativeFrom = Math.round(chunk.startSec * fps);
         const overlappedFrom = Math.max(0, nativeFrom - fadeFrames);
@@ -482,6 +522,24 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
           </Sequence>
         );
       })}
+
+      {showEndSlide && (
+        <Sequence
+          from={endFrom}
+          durationInFrames={endFrames + (audioFrames - endFrom)}
+          premountFor={fps}
+        >
+          <Slide
+            text={endText}
+            backgroundSrc={endBackgroundSrc}
+            language={language}
+            primaryFontSizePt={primaryFontSizePt}
+            lineSpacingMultiplier={lineSpacingMultiplier}
+            paddingStyle={paddingStyle}
+            backgroundMotion={backgroundMotion}
+          />
+        </Sequence>
+      )}
     </AbsoluteFill>
   );
 };
