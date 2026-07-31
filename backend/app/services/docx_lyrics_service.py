@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections import Counter
 from pathlib import Path
 
 from docx import Document
@@ -72,14 +73,18 @@ def _filename_metadata(filename: str) -> tuple[str, str, str]:
 
 
 def _paragraph_lines(document: Document) -> list[str]:
+    """Return paragraph text while preserving blank paragraphs as stanza breaks."""
     lines: list[str] = []
     for paragraph in document.paragraphs:
         pieces = paragraph.text.splitlines() or [paragraph.text]
         for piece in pieces:
             text = piece.strip()
-            if text:
-                lines.append(text)
+            lines.append(text)
     return lines
+
+
+def _normalized_title(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().casefold()
 
 
 def _find_titles(
@@ -99,7 +104,12 @@ def _find_titles(
         number, candidate = match.groups()
         if contains_chinese(candidate):
             song_number = number
-            title_zh = candidate.strip()
+            candidate = candidate.strip()
+            if fallback_en and _normalized_title(candidate).endswith(
+                _normalized_title(fallback_en)
+            ):
+                candidate = candidate[: -len(fallback_en)].strip()
+            title_zh = candidate or fallback_zh
             zh_idx = idx
             break
 
@@ -118,16 +128,68 @@ def _find_titles(
         en_idx = idx
         break
 
+    if en_idx is None and zh_idx is not None and fallback_en:
+        wanted = _normalized_title(fallback_en)
+        for idx in range(zh_idx + 1, len(lines)):
+            line = lines[idx].strip()
+            if not line:
+                continue
+            if _normalized_title(line) == wanted:
+                title_en = line
+                en_idx = idx
+            break
+
     return song_number, title_zh, title_en, zh_idx, en_idx
 
 
-def _parse_language_block(lines: list[str]) -> tuple[dict[int, list[str]], list[str]]:
+def _split_stanza_groups(lines: list[str]) -> list[list[str]]:
+    groups: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        text = line.strip()
+        if text:
+            current.append(text)
+        elif current:
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _has_explicit_section_marker(lines: list[str]) -> bool:
+    return any(
+        _CHORUS_MARKER_RE.match(line) or _VERSE_MARKER_RE.match(line)
+        for line in lines
+        if line.strip()
+    )
+
+
+def _group_matches_language(group: list[str], language: str) -> bool:
+    has_zh = any(contains_chinese(line) for line in group)
+    has_en = any(re.search(r"[A-Za-z]", line) for line in group)
+    return (has_zh and not has_en) if language == "zh" else (has_en and not has_zh)
+
+
+def _parse_language_block(
+    lines: list[str], language: str
+) -> tuple[dict[int, list[str]], list[str]]:
+    if not _has_explicit_section_marker(lines):
+        groups = [
+            group
+            for group in _split_stanza_groups(lines)
+            if _group_matches_language(group, language)
+        ]
+        return {number: group for number, group in enumerate(groups, start=1)}, []
+
     verses: dict[int, list[str]] = {}
     chorus: list[str] = []
     current_kind = "verse"
     current_number = 1
 
     for line in lines:
+        if not line.strip():
+            continue
         if _CHORUS_MARKER_RE.match(line):
             current_kind = "chorus"
             continue
@@ -142,6 +204,60 @@ def _parse_language_block(lines: list[str]) -> tuple[dict[int, list[str]], list[
             verses.setdefault(current_number, []).append(line)
 
     return {number: value for number, value in verses.items() if value}, chorus
+
+
+def _split_bilingual_group(group: list[str]) -> tuple[list[str], list[str]]:
+    zh_lines = [line for line in group if contains_chinese(line)]
+    en_lines = [
+        line
+        for line in group
+        if not contains_chinese(line) and re.search(r"[A-Za-z]", line)
+    ]
+    return zh_lines, en_lines
+
+
+def _group_signature(lines: list[str]) -> tuple[str, ...]:
+    return tuple(re.sub(r"\s+", " ", line).strip().casefold() for line in lines)
+
+
+def _parse_interleaved_bilingual(
+    lines: list[str],
+) -> tuple[dict[int, list[str]], dict[int, list[str]], list[str], list[str]]:
+    groups: list[tuple[list[str], list[str]]] = []
+    for group in _split_stanza_groups(lines):
+        zh_lines, en_lines = _split_bilingual_group(group)
+        if zh_lines and en_lines:
+            groups.append((zh_lines, en_lines))
+    if not groups:
+        return {}, {}, [], []
+
+    signatures = [_group_signature(zh_lines) for zh_lines, _ in groups]
+    counts = Counter(signatures)
+    chorus_signature = next(
+        (
+            signature
+            for signature in signatures
+            if counts[signature] >= 2
+        ),
+        None,
+    )
+
+    zh_verses: dict[int, list[str]] = {}
+    en_verses: dict[int, list[str]] = {}
+    zh_chorus: list[str] = []
+    en_chorus: list[str] = []
+    verse_number = 1
+    for (zh_lines, en_lines), signature in zip(groups, signatures):
+        if chorus_signature is not None and signature == chorus_signature:
+            if not zh_chorus:
+                zh_chorus = zh_lines
+                en_chorus = en_lines
+            continue
+        zh_verses[verse_number] = zh_lines
+        en_verses[verse_number] = en_lines
+        verse_number += 1
+
+    return zh_verses, en_verses, zh_chorus, en_chorus
 
 
 def _make_sections(
@@ -246,21 +362,39 @@ def parse_docx(data: bytes, filename: str) -> DocxLyricsImportResponse:
         raise DocxLyricsError("无法读取这个 DOCX；文件可能已经损坏") from exc
 
     lines = _paragraph_lines(document)
-    if not lines:
+    if not any(line.strip() for line in lines):
         raise DocxLyricsError("DOCX 中没有可读取的文字")
 
     song_number, title_zh, title_en, zh_idx, en_idx = _find_titles(
         lines, source_filename
     )
     if zh_idx is not None and en_idx is not None and zh_idx < en_idx:
-        zh_block = lines[zh_idx + 1 : en_idx]
-        en_block = lines[en_idx + 1 :]
+        between_titles = lines[zh_idx + 1 : en_idx]
+        if any(line.strip() for line in between_titles):
+            english_block = lines[en_idx + 1 :]
+            zh_has_markers = _has_explicit_section_marker(between_titles)
+            en_has_markers = _has_explicit_section_marker(english_block)
+            zh_verses, zh_chorus = _parse_language_block(between_titles, "zh")
+            en_verses, en_chorus = _parse_language_block(english_block, "en")
+            if not zh_has_markers and not en_has_markers:
+                # Unnumbered bilingual hymn blocks must pair stanza-for-stanza.
+                # Trailing material in only one language is commonly a scripture
+                # or attribution appendix, rather than an additional lyric verse.
+                paired_count = min(len(zh_verses), len(en_verses))
+                zh_verses = {
+                    number: zh_verses[number]
+                    for number in range(1, paired_count + 1)
+                }
+                en_verses = {
+                    number: en_verses[number]
+                    for number in range(1, paired_count + 1)
+                }
+        else:
+            zh_verses, en_verses, zh_chorus, en_chorus = (
+                _parse_interleaved_bilingual(lines[en_idx + 1 :])
+            )
     else:
-        zh_block = []
-        en_block = []
-
-    zh_verses, zh_chorus = _parse_language_block(zh_block)
-    en_verses, en_chorus = _parse_language_block(en_block)
+        zh_verses, en_verses, zh_chorus, en_chorus = {}, {}, [], []
     sections = _make_sections(zh_verses, en_verses, zh_chorus, en_chorus)
     if not sections:
         sections = [

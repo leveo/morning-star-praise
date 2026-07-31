@@ -83,6 +83,56 @@ def _import_source(content: bytes | None = None, filename: str = "450 主啊！�
     )
 
 
+def _add_group(doc: Document, zh_lines: list[str], en_lines: list[str]) -> None:
+    for text in [*zh_lines, *en_lines]:
+        doc.add_paragraph(text)
+    doc.add_paragraph("")
+
+
+def _make_unnumbered_language_blocks_source() -> bytes:
+    doc = Document()
+    doc.add_paragraph("466 馬其頓呼聲 MACEDONIA")
+    for verse in range(1, 5):
+        for line in range(1, 5):
+            doc.add_paragraph(f"第{verse}節中文第{line}行")
+        doc.add_paragraph("")
+    doc.add_paragraph("466 MACEDONIA")
+    doc.add_paragraph("")
+    for verse in range(1, 5):
+        for line in range(1, 5):
+            doc.add_paragraph(f"Verse {verse} English line {line}")
+        doc.add_paragraph("")
+    doc.add_paragraph("附加中文經文")
+    doc.add_paragraph("")
+    doc.add_paragraph("Scripture text that is not hymn lyrics")
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_interleaved_repeated_chorus_source() -> bytes:
+    doc = Document()
+    doc.add_paragraph("468 信徒奮興")
+    doc.add_paragraph("O Zion, Haste, Thy Mission High Fulfilling")
+    doc.add_paragraph("")
+    chorus_zh = ["副歌中文第一行", "副歌中文第二行", "阿門。"]
+    chorus_en = ["Chorus English line one", "Chorus English line two", "and release."]
+    for verse in range(1, 4):
+        _add_group(
+            doc,
+            [f"第{verse}節中文第{line}行" for line in range(1, 5)],
+            [f"Verse {verse} English line {line}" for line in range(1, 5)],
+        )
+        final_chorus_en = [
+            *chorus_en[:-1],
+            "and release. Amen" if verse == 3 else chorus_en[-1],
+        ]
+        _add_group(doc, chorus_zh, final_chorus_en)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def test_import_docx_expands_chorus_after_every_verse():
     response = _import_source()
     assert response.status_code == 200
@@ -97,6 +147,48 @@ def test_import_docx_expands_chorus_after_every_verse():
     assert data["combined_lyrics"].count("I am coming, Lord!") == 3
     assert "副歌" not in data["combined_lyrics"]
     assert "Refrain" not in data["combined_lyrics"]
+
+
+def test_import_docx_infers_unnumbered_language_blocks_and_ignores_appendix():
+    response = _import_source(
+        _make_unnumbered_language_blocks_source(),
+        "466 馬其頓呼聲 MACEDONIA.docx",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["title_zh"] == "馬其頓呼聲"
+    assert data["title_en"] == "MACEDONIA"
+    assert data["sequence"] == ["verse-1", "verse-2", "verse-3", "verse-4"]
+    assert [len(section["zh_lines"]) for section in data["sections"]] == [4] * 4
+    assert [len(section["en_lines"]) for section in data["sections"]] == [4] * 4
+    assert "附加中文經文" not in data["combined_lyrics"]
+    assert "Scripture text" not in data["combined_lyrics"]
+    assert data["has_blocking_errors"] is False
+
+
+def test_import_docx_infers_interleaved_verses_and_repeated_chorus():
+    response = _import_source(
+        _make_interleaved_repeated_chorus_source(),
+        "468 信徒奮興 O ZION, HASTE, THY MISSION HIGH FULFILLING.docx",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["title_zh"] == "信徒奮興"
+    assert data["title_en"] == "O Zion, Haste, Thy Mission High Fulfilling"
+    assert data["sequence"] == [
+        "verse-1", "chorus", "verse-2", "chorus", "verse-3", "chorus"
+    ]
+    assert [section["kind"] for section in data["sections"]] == [
+        "verse", "verse", "verse", "chorus"
+    ]
+    chorus = next(section for section in data["sections"] if section["kind"] == "chorus")
+    assert chorus["zh_lines"] == ["副歌中文第一行", "副歌中文第二行", "阿門。"]
+    assert chorus["en_lines"] == [
+        "Chorus English line one", "Chorus English line two", "and release."
+    ]
+    assert data["combined_lyrics"].count("副歌中文第一行") == 3
+    assert data["combined_lyrics"].count("Verse 3 English line 4") == 1
+    assert data["has_blocking_errors"] is False
 
 
 def test_import_docx_without_chorus_keeps_verses_only():
