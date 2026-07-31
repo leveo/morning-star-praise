@@ -32,7 +32,9 @@ export function useUsageTracker() {
     try {
       const u = await getUsage(sid);
       setUsage(u);
-    } catch {}
+    } catch {
+      // Usage reporting is best-effort and must not interrupt the main workflow.
+    }
   }, [sessionId]);
 
   return { sessionId: sessionId || globalSessionId, usage, refreshUsage };

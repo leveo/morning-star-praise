@@ -17,6 +17,7 @@ import {
   uploadSheet,
   analyzeSheet,
   deleteSheet,
+  getApiErrorDetail,
   type SheetCrop,
 } from '../api/client';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
@@ -264,7 +265,7 @@ export default function SlidesPage() {
           ? await parseLyricsBilingual(primaryText, translatedLyrics, bilingualMode, maxLines, maxSlides, maxWidth)
           : await parseLyrics(primaryText, language, maxLines, maxSlides, maxWidth);
       setSlides(result.slides);
-    } catch (err) {
+    } catch {
       setError(tl.errorParse);
     }
   };
@@ -303,7 +304,7 @@ export default function SlidesPage() {
       );
       setPreview(result.slides_preview);
       setFilename(result.filename);
-    } catch (err) {
+    } catch {
       setError(tl.errorGenerate);
     } finally {
       setLoading(false);
@@ -403,8 +404,8 @@ export default function SlidesPage() {
       setTranslatedLyrics(translated);
       setAddTranslation(true);
       refreshUsage();
-    } catch (err: any) {
-      const msg = err.response?.data?.detail || tl.errorTranslate;
+    } catch (err: unknown) {
+      const msg = getApiErrorDetail(err) || tl.errorTranslate;
       setError(msg);
     } finally {
       setTranslating(false);
@@ -807,7 +808,9 @@ export default function SlidesPage() {
                 try {
                   await saveSong(title, lyrics, language, 'text');
                   alert(tl.savedToast);
-                } catch {}
+                } catch {
+                  // Saving is optional; keep the generated deck available on failure.
+                }
               }}
               className="text-sm text-slate-400 hover:text-gold-400 transition-colors"
             >

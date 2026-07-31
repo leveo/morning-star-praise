@@ -8,6 +8,15 @@ const api = axios.create({
   baseURL: '/api',
 });
 
+export function getApiErrorDetail(error: unknown): string | undefined {
+  if (!axios.isAxiosError<{ detail?: unknown }>(error)) {
+    return undefined;
+  }
+
+  const detail = error.response?.data?.detail;
+  return typeof detail === 'string' ? detail : undefined;
+}
+
 export interface DocxLyricsWarning {
   code: string;
   message: string;

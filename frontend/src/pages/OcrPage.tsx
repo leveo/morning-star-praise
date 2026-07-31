@@ -19,6 +19,7 @@ import {
   uploadSheet,
   analyzeSheet,
   deleteSheet,
+  getApiErrorDetail,
   type SheetCrop,
   type SheetMode,
 } from '../api/client';
@@ -278,8 +279,8 @@ export default function OcrPage() {
           void runSheetAnalyze(sheetUploadResult.session_id, parsed.slides.length);
         }
       }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'OCR extraction failed');
+    } catch (err: unknown) {
+      setError(getApiErrorDetail(err) || 'OCR extraction failed');
     } finally {
       setExtracting(false);
       refreshUsage();
@@ -661,6 +662,29 @@ export default function OcrPage() {
   );
 }
 
+function LLMStatusPill({
+  label,
+  model,
+  configured,
+}: {
+  label: string;
+  model: string;
+  configured: boolean;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded px-2 py-0.5 border ${
+        configured ? 'border-slate-600 bg-slate-800/50 text-slate-300'
+                    : 'border-amber-700/60 bg-amber-900/20 text-amber-300'
+      }`}
+    >
+      <span className="font-medium">{label || '—'}</span>
+      {model && <span className="text-slate-500">{model}</span>}
+      {!configured && <span title="API key missing">⚠</span>}
+    </span>
+  );
+}
+
 function ActiveLLMBadge({
   activeLLM, sheetMode,
 }: {
@@ -676,34 +700,21 @@ function ActiveLLMBadge({
   const aiDetection = sheetMode === 'crop_llm';
   const same = textProvider === visionProvider && textModel === visionModel;
 
-  const Pill = ({ label, model, configured }: { label: string; model: string; configured: boolean }) => (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded px-2 py-0.5 border ${
-        configured ? 'border-slate-600 bg-slate-800/50 text-slate-300'
-                    : 'border-amber-700/60 bg-amber-900/20 text-amber-300'
-      }`}
-    >
-      <span className="font-medium">{label || '—'}</span>
-      {model && <span className="text-slate-500">{model}</span>}
-      {!configured && <span title="API key missing">⚠</span>}
-    </span>
-  );
-
   return (
     <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
       <span>当前调用模型:</span>
       {same ? (
         <>
           <span>OCR/视觉</span>
-          <Pill label={visionLabel} model={visionModel} configured={visionConfigured} />
+          <LLMStatusPill label={visionLabel} model={visionModel} configured={visionConfigured} />
         </>
       ) : (
         <>
           <span>OCR</span>
-          <Pill label={visionLabel} model={visionModel} configured={visionConfigured} />
+          <LLMStatusPill label={visionLabel} model={visionModel} configured={visionConfigured} />
           <span className="text-slate-600">·</span>
           <span>文本</span>
-          <Pill label={textLabel} model={textModel} configured={textConfigured} />
+          <LLMStatusPill label={textLabel} model={textModel} configured={textConfigured} />
         </>
       )}
       {aiDetection && (

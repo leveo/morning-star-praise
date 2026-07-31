@@ -17,6 +17,7 @@ import {
   generatePPT,
   getDownloadUrl,
   convertChinese,
+  getApiErrorDetail,
   type FrameInfo,
 } from '../api/client';
 import type { SlideData } from '../types';
@@ -170,8 +171,8 @@ export default function YouTubePage() {
         setWorkDir(result.work_dir);
         setSelectedFrameIndices(new Set(result.frames.map((_, i) => i)));
       }
-    } catch (err: any) {
-      const msg = err.response?.data?.detail || 'Failed to extract from YouTube';
+    } catch (err: unknown) {
+      const msg = getApiErrorDetail(err) || 'Failed to extract from YouTube';
       setError(msg);
     } finally {
       stopProgress();
