@@ -165,6 +165,10 @@ def _has_explicit_section_marker(lines: list[str]) -> bool:
     )
 
 
+def _has_explicit_verse_marker(lines: list[str]) -> bool:
+    return any(_VERSE_MARKER_RE.match(line) for line in lines if line.strip())
+
+
 def _group_matches_language(group: list[str], language: str) -> bool:
     has_zh = any(contains_chinese(line) for line in group)
     has_en = any(re.search(r"[A-Za-z]", line) for line in group)
@@ -174,13 +178,44 @@ def _group_matches_language(group: list[str], language: str) -> bool:
 def _parse_language_block(
     lines: list[str], language: str
 ) -> tuple[dict[int, list[str]], list[str]]:
-    if not _has_explicit_section_marker(lines):
-        groups = [
-            group
-            for group in _split_stanza_groups(lines)
-            if _group_matches_language(group, language)
-        ]
-        return {number: group for number, group in enumerate(groups, start=1)}, []
+    if not _has_explicit_verse_marker(lines):
+        verses: dict[int, list[str]] = {}
+        chorus: list[str] = []
+        next_group_is_chorus = False
+
+        def add_verse(group: list[str]) -> None:
+            if group and _group_matches_language(group, language):
+                verses[len(verses) + 1] = group
+
+        for group in _split_stanza_groups(lines):
+            chorus_index = next(
+                (
+                    index
+                    for index, line in enumerate(group)
+                    if _CHORUS_MARKER_RE.match(line)
+                ),
+                None,
+            )
+            if chorus_index is not None:
+                add_verse(group[:chorus_index])
+                chorus_lines = group[chorus_index + 1 :]
+                if chorus_lines and _group_matches_language(chorus_lines, language):
+                    if not chorus:
+                        chorus = chorus_lines
+                    next_group_is_chorus = False
+                else:
+                    next_group_is_chorus = True
+                continue
+
+            if next_group_is_chorus and _group_matches_language(group, language):
+                if not chorus:
+                    chorus = group
+                next_group_is_chorus = False
+                continue
+
+            add_verse(group)
+
+        return verses, chorus
 
     verses: dict[int, list[str]] = {}
     chorus: list[str] = []

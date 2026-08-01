@@ -133,6 +133,39 @@ def _make_interleaved_repeated_chorus_source() -> bytes:
     return buffer.getvalue()
 
 
+def _make_chorus_only_marker_source() -> bytes:
+    doc = Document()
+    doc.add_paragraph("465 我愛傳講主福音")
+    for text in [f"第一節中文第{line}行" for line in range(1, 5)]:
+        doc.add_paragraph(text)
+    doc.add_paragraph("")
+    doc.add_paragraph("副歌：")
+    doc.add_paragraph("副歌中文第一行")
+    doc.add_paragraph("副歌中文第二行")
+    doc.add_paragraph("")
+    for verse in range(2, 5):
+        for text in [f"第{verse}節中文第{line}行" for line in range(1, 5)]:
+            doc.add_paragraph(text)
+        doc.add_paragraph("")
+
+    doc.add_paragraph("465 I Love To Tell The Story")
+    for text in [f"Verse 1 English line {line}" for line in range(1, 5)]:
+        doc.add_paragraph(text)
+    doc.add_paragraph("")
+    doc.add_paragraph("Refrain:")
+    doc.add_paragraph("Chorus English line one")
+    doc.add_paragraph("Chorus English line two")
+    doc.add_paragraph("")
+    for verse in range(2, 5):
+        for text in [f"Verse {verse} English line {line}" for line in range(1, 5)]:
+            doc.add_paragraph(text)
+        doc.add_paragraph("")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def test_import_docx_expands_chorus_after_every_verse():
     response = _import_source()
     assert response.status_code == 200
@@ -147,6 +180,30 @@ def test_import_docx_expands_chorus_after_every_verse():
     assert data["combined_lyrics"].count("I am coming, Lord!") == 3
     assert "副歌" not in data["combined_lyrics"]
     assert "Refrain" not in data["combined_lyrics"]
+
+
+def test_import_docx_limits_chorus_marker_to_one_stanza():
+    response = _import_source(
+        _make_chorus_only_marker_source(),
+        "465 我愛傳講主福音 I LOVE TO TELL THE STORY.docx",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["sequence"] == [
+        "verse-1", "chorus", "verse-2", "chorus",
+        "verse-3", "chorus", "verse-4", "chorus",
+    ]
+    verses = [section for section in data["sections"] if section["kind"] == "verse"]
+    chorus = next(section for section in data["sections"] if section["kind"] == "chorus")
+    assert [len(section["zh_lines"]) for section in verses] == [4] * 4
+    assert [len(section["en_lines"]) for section in verses] == [4] * 4
+    assert chorus["zh_lines"] == ["副歌中文第一行", "副歌中文第二行"]
+    assert chorus["en_lines"] == [
+        "Chorus English line one", "Chorus English line two",
+    ]
+    assert "第2節中文第1行" not in chorus["zh_lines"]
+    assert "Verse 2 English line 1" not in chorus["en_lines"]
+    assert data["has_blocking_errors"] is False
 
 
 def test_import_docx_infers_unnumbered_language_blocks_and_ignores_appendix():
