@@ -30,6 +30,35 @@ export interface DocxLyricsSection {
   number: number | null;
   zh_lines: string[];
   en_lines: string[];
+  source_fragment_ids: string[];
+  amen_zh: string | null;
+  amen_en: string | null;
+}
+
+export type DocxLyricsLayoutKind =
+  | 'language_blocks'
+  | 'stanza_interleaved'
+  | 'line_interleaved'
+  | 'table_columns';
+
+export interface DocxLyricsUnresolvedFragment {
+  id: string;
+  text: string;
+  location: string;
+  language_guess: 'zh' | 'en' | 'unknown';
+  reason: string;
+}
+
+export interface DocxLyricsParseCandidate {
+  id: string;
+  layout_kind: DocxLyricsLayoutKind;
+  confidence: number;
+  reasons: string[];
+  sections: DocxLyricsSection[];
+  sequence: string[];
+  unresolved_fragments: DocxLyricsUnresolvedFragment[];
+  classified_fragment_count: number;
+  total_fragment_count: number;
 }
 
 export interface DocxLyricsImport {
@@ -47,6 +76,15 @@ export interface DocxLyricsImport {
   combined_lyrics: string;
   warnings: DocxLyricsWarning[];
   has_blocking_errors: boolean;
+  layout_kind: DocxLyricsLayoutKind;
+  confidence: number;
+  requires_confirmation: boolean;
+  review_confirmed: boolean;
+  candidate_layouts: DocxLyricsParseCandidate[];
+  unresolved_fragments: DocxLyricsUnresolvedFragment[];
+  classified_fragment_count: number;
+  total_fragment_count: number;
+  ignored_fragment_ids: string[];
 }
 
 export interface DocxLyricsExportRequest {

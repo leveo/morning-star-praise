@@ -94,17 +94,17 @@ def _make_unnumbered_language_blocks_source() -> bytes:
     doc.add_paragraph("466 馬其頓呼聲 MACEDONIA")
     for verse in range(1, 5):
         for line in range(1, 5):
-            doc.add_paragraph(f"第{verse}節中文第{line}行")
+            doc.add_paragraph(f"詩歌{verse}中文第{line}行")
         doc.add_paragraph("")
     doc.add_paragraph("466 MACEDONIA")
     doc.add_paragraph("")
     for verse in range(1, 5):
         for line in range(1, 5):
-            doc.add_paragraph(f"Verse {verse} English line {line}")
+            doc.add_paragraph(f"Song {verse} English line {line}")
         doc.add_paragraph("")
     doc.add_paragraph("附加中文經文")
     doc.add_paragraph("")
-    doc.add_paragraph("Scripture text that is not hymn lyrics")
+    doc.add_paragraph("Scripture: text that is not hymn lyrics")
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
@@ -115,13 +115,13 @@ def _make_interleaved_repeated_chorus_source() -> bytes:
     doc.add_paragraph("468 信徒奮興")
     doc.add_paragraph("O Zion, Haste, Thy Mission High Fulfilling")
     doc.add_paragraph("")
-    chorus_zh = ["副歌中文第一行", "副歌中文第二行", "阿門。"]
+    chorus_zh = ["共同重唱中文第一行", "共同重唱中文第二行", "阿門。"]
     chorus_en = ["Chorus English line one", "Chorus English line two", "and release."]
     for verse in range(1, 4):
         _add_group(
             doc,
-            [f"第{verse}節中文第{line}行" for line in range(1, 5)],
-            [f"Verse {verse} English line {line}" for line in range(1, 5)],
+            [f"第{verse}節", *[f"信徒{verse}中文第{line}行" for line in range(1, 5)]],
+            [f"Verse {verse}", *[f"Hymn stanza {verse} English line {line}" for line in range(1, 5)]],
         )
         final_chorus_en = [
             *chorus_en[:-1],
@@ -219,7 +219,7 @@ def test_import_docx_infers_unnumbered_language_blocks_and_ignores_appendix():
     assert [len(section["zh_lines"]) for section in data["sections"]] == [4] * 4
     assert [len(section["en_lines"]) for section in data["sections"]] == [4] * 4
     assert "附加中文經文" not in data["combined_lyrics"]
-    assert "Scripture text" not in data["combined_lyrics"]
+    assert "Scripture:" not in data["combined_lyrics"]
     assert data["has_blocking_errors"] is False
 
 
@@ -239,12 +239,14 @@ def test_import_docx_infers_interleaved_verses_and_repeated_chorus():
         "verse", "verse", "verse", "chorus"
     ]
     chorus = next(section for section in data["sections"] if section["kind"] == "chorus")
-    assert chorus["zh_lines"] == ["副歌中文第一行", "副歌中文第二行", "阿門。"]
+    assert chorus["zh_lines"] == ["共同重唱中文第一行", "共同重唱中文第二行"]
     assert chorus["en_lines"] == [
         "Chorus English line one", "Chorus English line two", "and release."
     ]
-    assert data["combined_lyrics"].count("副歌中文第一行") == 3
-    assert data["combined_lyrics"].count("Verse 3 English line 4") == 1
+    assert chorus["amen_zh"] == "阿門。"
+    assert chorus["amen_en"] == "Amen"
+    assert data["combined_lyrics"].count("共同重唱中文第一行") == 3
+    assert data["combined_lyrics"].count("Hymn stanza 3 English line 4") == 1
     assert data["has_blocking_errors"] is False
 
 
@@ -254,6 +256,359 @@ def test_import_docx_without_chorus_keeps_verses_only():
     data = response.json()
     assert data["sequence"] == ["verse-1", "verse-2", "verse-3"]
     assert [section["kind"] for section in data["sections"]] == ["verse"] * 3
+
+
+def test_import_docx_supports_multi_digit_verse_numbers():
+    doc = Document()
+    doc.add_paragraph("999 十二節聖詩")
+    for verse in range(1, 13):
+        doc.add_paragraph(f"第{verse}節")
+        doc.add_paragraph(f"這是中文第{verse}節歌詞")
+    doc.add_paragraph("999 Twelve Verse Hymn")
+    for verse in range(1, 13):
+        doc.add_paragraph(f"Verse {verse}")
+        doc.add_paragraph(f"English stanza {verse} lyric")
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    response = _import_source(
+        buffer.getvalue(),
+        "999 十二節聖詩 TWELVE VERSE HYMN.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    verses = [section for section in data["sections"] if section["kind"] == "verse"]
+    assert [section["number"] for section in verses] == list(range(1, 13))
+    assert verses[9]["zh_lines"] == ["這是中文第10節歌詞"]
+    assert verses[9]["en_lines"] == ["English stanza 10 lyric"]
+    assert data["has_blocking_errors"] is False
+
+
+def test_import_docx_preserves_lyrics_that_begin_with_metadata_words():
+    doc = Document()
+    for text in [
+        "998 生命之言",
+        "Verse 1",
+        "生命之言何等美麗",
+        "恩典泉源永不止息",
+        "998 Words of Life",
+        "Verse 1",
+        "Words of life and beauty",
+        "Source of every blessing",
+    ]:
+        doc.add_paragraph(text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    response = _import_source(
+        buffer.getvalue(),
+        "998 生命之言 WORDS OF LIFE.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    verse = next(section for section in data["sections"] if section["kind"] == "verse")
+    assert verse["en_lines"] == [
+        "Words of life and beauty",
+        "Source of every blessing",
+    ]
+    assert data["classified_fragment_count"] == data["total_fragment_count"]
+    assert data["has_blocking_errors"] is False
+
+
+def test_import_docx_outputs_final_verse_amen_after_repeated_chorus():
+    doc = Document()
+    for text in [
+        "997 結尾測試",
+        "1",
+        "中文第一節",
+        "副歌：",
+        "中文副歌",
+        "2",
+        "中文第二節",
+        "阿門。",
+        "997 Ending Test",
+        "Verse 1",
+        "English verse one",
+        "Refrain:",
+        "English refrain",
+        "Verse 2",
+        "English verse two",
+        "Amen",
+    ]:
+        doc.add_paragraph(text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    response = _import_source(
+        buffer.getvalue(),
+        "997 結尾測試 ENDING TEST.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    verse_two = next(section for section in data["sections"] if section["id"] == "verse-2")
+    assert verse_two["amen_zh"] == "阿門。"
+    assert verse_two["amen_en"] == "Amen"
+    assert data["combined_lyrics"].endswith("English refrain\nAmen")
+    assert data["combined_lyrics"].count("阿門。") == 1
+    assert data["combined_lyrics"].count("Amen") == 1
+
+    payload = {
+        key: data[key]
+        for key in (
+            "source_filename",
+            "song_number",
+            "title_zh",
+            "title_en",
+            "collection_zh",
+            "collection_en",
+            "sections",
+        )
+    }
+    exported_response = client.post("/api/lyrics/export-docx", json=payload)
+    assert exported_response.status_code == 200
+    exported = Document(io.BytesIO(exported_response.content))
+    nonblank = [paragraph for paragraph in exported.paragraphs if paragraph.text]
+    assert [paragraph.text for paragraph in nonblank].count("阿門。") == 1
+    assert [paragraph.text for paragraph in nonblank].count("Amen") == 1
+    assert nonblank[-1].text == "Amen"
+    zh_amen = next(paragraph for paragraph in nonblank if paragraph.text == "阿門。")
+    en_amen = next(paragraph for paragraph in nonblank if paragraph.text == "Amen")
+    assert zh_amen.runs[0]._element.rPr.rFonts.get(qn("w:eastAsia")) == "宋体"
+    assert en_amen.runs[0]._element.rPr.rFonts.get(qn("w:ascii")) == "Times New Roman"
+
+
+def test_import_docx_blocks_refrain_references_without_refrain_text():
+    doc = Document()
+    for text in [
+        "996 缺少副歌",
+        "1",
+        "中文第一節",
+        "[副歌]",
+        "2",
+        "中文第二節",
+        "[副歌]",
+        "996 Missing Refrain",
+        "Verse 1",
+        "English verse one",
+        "[Refrain]",
+        "Verse 2",
+        "English verse two",
+        "[Refrain]",
+    ]:
+        doc.add_paragraph(text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    response = _import_source(
+        buffer.getvalue(),
+        "996 缺少副歌 MISSING REFRAIN.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert not any(section["kind"] == "chorus" for section in data["sections"])
+    assert data["requires_confirmation"] is True
+    assert data["has_blocking_errors"] is True
+    assert any(
+        "没有识别到完整双语副歌正文" in reason
+        for candidate in data["candidate_layouts"]
+        for reason in candidate["reasons"]
+    )
+
+
+def test_import_docx_accepts_blank_line_after_chorus_label():
+    doc = Document()
+    for text in [
+        "995 空行副歌",
+        "1",
+        "中文第一節",
+        "副歌：",
+        "",
+        "中文副歌",
+        "995 Chorus Spacing",
+        "Verse 1",
+        "English verse one",
+        "Refrain:",
+        "",
+        "English refrain",
+    ]:
+        doc.add_paragraph(text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    response = _import_source(
+        buffer.getvalue(),
+        "995 空行副歌 CHORUS SPACING.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    chorus = next(section for section in data["sections"] if section["kind"] == "chorus")
+    assert chorus["zh_lines"] == ["中文副歌"]
+    assert chorus["en_lines"] == ["English refrain"]
+    assert data["has_blocking_errors"] is False
+
+
+def _make_repeated_labeled_chorus_source(*, conflicting: bool) -> bytes:
+    doc = Document()
+    doc.add_paragraph("994 重複副歌")
+    for verse in range(1, 3):
+        doc.add_paragraph(str(verse))
+        doc.add_paragraph(f"中文第{verse}節")
+        doc.add_paragraph("副歌：")
+        doc.add_paragraph("不同中文副歌" if conflicting and verse == 2 else "共同中文副歌")
+    doc.add_paragraph("994 Repeated Chorus")
+    for verse in range(1, 3):
+        doc.add_paragraph(f"Verse {verse}")
+        doc.add_paragraph(f"English verse {verse}")
+        doc.add_paragraph("Refrain:")
+        doc.add_paragraph(
+            "Different English refrain" if conflicting and verse == 2
+            else "Shared English refrain"
+        )
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def test_import_docx_deduplicates_identical_labeled_choruses():
+    response = _import_source(
+        _make_repeated_labeled_chorus_source(conflicting=False),
+        "994 重複副歌 REPEATED CHORUS.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    chorus = next(section for section in data["sections"] if section["kind"] == "chorus")
+    assert chorus["zh_lines"] == ["共同中文副歌"]
+    assert chorus["en_lines"] == ["Shared English refrain"]
+    assert data["combined_lyrics"].count("共同中文副歌") == 2
+    assert data["unresolved_fragments"] == []
+    assert data["has_blocking_errors"] is False
+
+
+def test_import_docx_blocks_conflicting_labeled_choruses():
+    response = _import_source(
+        _make_repeated_labeled_chorus_source(conflicting=True),
+        "994 重複副歌 REPEATED CHORUS.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["requires_confirmation"] is True
+    assert data["has_blocking_errors"] is True
+    assert any("不同中文副歌" == item["text"] for item in data["unresolved_fragments"])
+    assert any(
+        "多个文本不同的副歌" in reason
+        for candidate in data["candidate_layouts"]
+        for reason in candidate["reasons"]
+    )
+
+
+def test_import_docx_preserves_inline_amen_punctuation():
+    doc = Document()
+    for text in [
+        "993 阿門標點",
+        "1",
+        "直到永遠，阿門。",
+        "993 Amen Punctuation",
+        "Verse 1",
+        "Until all is well. Amen!",
+    ]:
+        doc.add_paragraph(text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    response = _import_source(
+        buffer.getvalue(),
+        "993 阿門標點 AMEN PUNCTUATION.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    verse = next(section for section in data["sections"] if section["kind"] == "verse")
+    assert verse["zh_lines"] == ["直到永遠，"]
+    assert verse["amen_zh"] == "阿門。"
+    assert verse["en_lines"] == ["Until all is well."]
+    assert verse["amen_en"] == "Amen!"
+    assert data["combined_lyrics"].endswith("Until all is well.\nAmen!")
+
+
+def test_import_docx_finds_unnumbered_titles_from_filename_metadata():
+    doc = Document()
+    for text in [
+        "教會聖詩 #992",
+        "無號歌名",
+        "1",
+        "中文第一節",
+        "2",
+        "中文第二節",
+        "Unnumbered Title",
+        "English verse one",
+        "2",
+        "English verse two",
+    ]:
+        doc.add_paragraph(text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    response = _import_source(
+        buffer.getvalue(),
+        "992 無號歌名 UNNUMBERED TITLE.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["title_zh"] == "無號歌名"
+    assert data["title_en"] == "Unnumbered Title"
+    assert data["sequence"] == ["verse-1", "verse-2"]
+    assert "無號歌名" not in data["combined_lyrics"]
+    assert "Unnumbered Title" not in data["combined_lyrics"]
+    assert data["unresolved_fragments"] == []
+    assert data["has_blocking_errors"] is False
+
+
+def test_import_docx_starts_unnumbered_verse_after_chorus_blank_line():
+    doc = Document()
+    for text in [
+        "991 無號第二節",
+        "1",
+        "中文第一節",
+        "副歌：",
+        "中文副歌",
+        "",
+        "中文第二節無標籤",
+        "991 Unnumbered Second Verse",
+        "English verse one without label",
+        "Refrain:",
+        "English refrain",
+        "",
+        "English verse two without label",
+    ]:
+        doc.add_paragraph(text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    response = _import_source(
+        buffer.getvalue(),
+        "991 無號第二節 UNNUMBERED SECOND VERSE.docx",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    verses = [section for section in data["sections"] if section["kind"] == "verse"]
+    assert [section["zh_lines"] for section in verses] == [
+        ["中文第一節"],
+        ["中文第二節無標籤"],
+    ]
+    assert [section["en_lines"] for section in verses] == [
+        ["English verse one without label"],
+        ["English verse two without label"],
+    ]
+    assert data["has_blocking_errors"] is False
 
 
 def test_import_docx_reports_missing_language_section():

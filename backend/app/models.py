@@ -40,6 +40,39 @@ class DocxLyricsSection(BaseModel):
     number: int | None = None
     zh_lines: list[str] = Field(default_factory=list)
     en_lines: list[str] = Field(default_factory=list)
+    source_fragment_ids: list[str] = Field(default_factory=list)
+    amen_zh: str | None = None
+    amen_en: str | None = None
+
+
+DocxLyricsLayoutKind = Literal[
+    "language_blocks",
+    "stanza_interleaved",
+    "line_interleaved",
+    "table_columns",
+]
+
+
+class DocxLyricsUnresolvedFragment(BaseModel):
+    id: str
+    text: str
+    location: str
+    language_guess: Literal["zh", "en", "unknown"] = "unknown"
+    reason: str
+
+
+class DocxLyricsParseCandidate(BaseModel):
+    id: str
+    layout_kind: DocxLyricsLayoutKind
+    confidence: float
+    reasons: list[str] = Field(default_factory=list)
+    sections: list[DocxLyricsSection]
+    sequence: list[str]
+    unresolved_fragments: list[DocxLyricsUnresolvedFragment] = Field(
+        default_factory=list
+    )
+    classified_fragment_count: int = 0
+    total_fragment_count: int = 0
 
 
 class DocxLyricsImportResponse(BaseModel):
@@ -57,6 +90,17 @@ class DocxLyricsImportResponse(BaseModel):
     combined_lyrics: str
     warnings: list[DocxLyricsWarning]
     has_blocking_errors: bool
+    layout_kind: DocxLyricsLayoutKind = "language_blocks"
+    confidence: float = 0.0
+    requires_confirmation: bool = True
+    review_confirmed: bool = False
+    candidate_layouts: list[DocxLyricsParseCandidate] = Field(default_factory=list)
+    unresolved_fragments: list[DocxLyricsUnresolvedFragment] = Field(
+        default_factory=list
+    )
+    classified_fragment_count: int = 0
+    total_fragment_count: int = 0
+    ignored_fragment_ids: list[str] = Field(default_factory=list)
 
 
 class DocxLyricsExportRequest(BaseModel):
