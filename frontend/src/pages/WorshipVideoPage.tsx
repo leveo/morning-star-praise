@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Leo Song
 import { useEffect, useMemo, useRef, useState } from 'react';
-import BackgroundPicker from '../components/ppt/BackgroundPicker';
+import BackgroundPicker, { LazyVideoTile } from '../components/ppt/BackgroundPicker';
 import FontSettings from '../components/ppt/FontSettings';
 import VideoEditor from '../components/worship/VideoEditor';
 import FreeBackgroundResources from '../components/worship/FreeBackgroundResources';
+import ClearCurrentButton from '../components/shared/ClearCurrentButton';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { usePersistedFile } from '../hooks/usePersistedFile';
 import { useResumeSnapshot } from '../hooks/useResumeSnapshot';
 import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import {
   analyzeSheet,
   analyzeWorshipAudio,
-  createWorshipVideo,
+  deleteWorshipAnalysis,
   deleteSheet,
   extractLyricsFromFile,
   extractYouTubeLyrics,
@@ -29,8 +31,17 @@ import {
   type VideoJobStatus,
 } from '../api/client';
 import type { BackgroundInfo } from '../types';
+import {
+  consumeVideoHandoff,
+  readWordLyricsDraft,
+  wordLyricsDraftSignature,
+} from '../utils/wordLyricsHandoff';
 
 type LyricsSource = 'paste' | 'pptx' | 'image' | 'youtube';
+type ApiError = {
+  code?: string;
+  response?: { data?: { detail?: string } };
+};
 
 const LYRICS_SOURCE_ORDER: LyricsSource[] = ['paste', 'pptx', 'image', 'youtube'];
 
@@ -41,18 +52,37 @@ const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp,.pdf,image/*,application/pdf';
 export default function WorshipVideoPage() {
   const [uiLanguage] = useUILanguage();
   const t = UI_TEXT[uiLanguage].worshipVideo;
-  // File objects and in-flight job state can't survive tab switches — they
-  // reference browser-local resources (File) and backend resources that
-  // expire with the per-job cleanup.
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [lyricsFile, setLyricsFile] = useState<File | null>(null);
-  const [extractedBgs, setExtractedBgs] = useState<ExtractedBackground[]>([]);
-  const [job, setJob] = useState<VideoJobStatus | null>(null);
+  const titleLabels = uiLanguage === 'zh'
+    ? {
+        titleZh: '中文歌名',
+        titleEn: '英文歌名',
+        collectionZh: '中文诗集与编号',
+        collectionEn: '英文诗集名',
+      }
+    : {
+        titleZh: 'Chinese title',
+        titleEn: 'English title',
+        collectionZh: 'Chinese collection and number',
+        collectionEn: 'English collection',
+      };
+  const [audioFile, setAudioFile] = usePersistedFile('worshipVideo.audioFile');
+  const [lyricsFile, setLyricsFile] = usePersistedFile('worshipVideo.lyricsFile');
+  const [extractedBgs, setExtractedBgs] = usePersistedState<ExtractedBackground[]>(
+    'worshipVideo.extractedBgs',
+    [],
+  );
+  const [job, setJob] = usePersistedState<VideoJobStatus | null>('worshipVideo.job', null);
   const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
   const [extracting, setExtracting] = useState(false);
 
   const [title, setTitle] = usePersistedState('worshipVideo.title', '');
+  const [titleEn, setTitleEn] = usePersistedState('worshipVideo.titleEn', '');
+  const [collectionZh, setCollectionZh] = usePersistedState('worshipVideo.collectionZh', '');
+  const [collectionEn, setCollectionEn] = usePersistedState('worshipVideo.collectionEn', '');
+  const [wordDraftSignature, setWordDraftSignature] = usePersistedState(
+    'worshipVideo.wordDraftSignature',
+    '',
+  );
   const [composer, setComposer] = usePersistedState('worshipVideo.composer', '');
   const [language, setLanguage] = usePersistedState('worshipVideo.language', 'auto');
   const [lyrics, setLyrics] = usePersistedState('worshipVideo.lyrics', '');
@@ -70,6 +100,18 @@ export default function WorshipVideoPage() {
     false,
   );
   const [karaokeMode, setKaraokeMode] = usePersistedState('worshipVideo.karaokeMode', false);
+  const [backgroundMotion, setBackgroundMotion] = usePersistedState(
+    'worshipVideo.backgroundMotion',
+    false,
+  );
+  const [lyricLeadSeconds, setLyricLeadSeconds] = usePersistedState(
+    'worshipVideo.lyricLeadSeconds',
+    0.5,
+  );
+  const [showEndSlide, setShowEndSlide] = usePersistedState(
+    'worshipVideo.showEndSlide',
+    false,
+  );
   const template = useTemplateDefaults();
   const [showPageNumbers, setShowPageNumbers] = usePersistedState(
     'worshipVideo.showPageNumbers',
@@ -85,50 +127,83 @@ export default function WorshipVideoPage() {
     'worshipVideo.secondaryFontSize',
     null,
   );
-  const [lineSpacing, setLineSpacing] = usePersistedState<number | null>(
+  const [chineseLineSpacing, setChineseLineSpacing] = usePersistedState<number | null>(
     'worshipVideo.lineSpacing',
     template.lineSpacing,
+  );
+  const [englishLineSpacing, setEnglishLineSpacing] = usePersistedState<number | null>(
+    'worshipVideo.englishLineSpacing',
+    (() => {
+      if (typeof window === 'undefined') return template.lineSpacing;
+      try {
+        const legacy = window.sessionStorage.getItem('worshipVideo.lineSpacing');
+        return legacy == null ? template.lineSpacing : JSON.parse(legacy);
+      } catch {
+        return template.lineSpacing;
+      }
+    })(),
   );
 
   // Analysis state — regenerated whenever the inputs that affect slide
   // order / chunking change, so we never let the user generate a video
   // off a stale analysis. ``analyzedKey`` snapshots the input fingerprint
   // the current ``analysisId`` was computed from.
-  const [analysisId, setAnalysisId] = useState<string>('');
-  const [analyzedKey, setAnalyzedKey] = useState<string>('');
-  const [previewSlides, setPreviewSlides] = useState<AnalyzedSlide[]>([]);
-  const [occurrences, setOccurrences] = useState<AnalyzedStanzaOccurrence[]>([]);
+  const [analysisId, setAnalysisId] = usePersistedState('worshipVideo.analysisId', '');
+  const [analyzedKey, setAnalyzedKey] = usePersistedState('worshipVideo.analyzedKey', '');
+  const [previewSlides, setPreviewSlides] = usePersistedState<AnalyzedSlide[]>(
+    'worshipVideo.previewSlides',
+    [],
+  );
+  const [occurrences, setOccurrences] = usePersistedState<AnalyzedStanzaOccurrence[]>(
+    'worshipVideo.occurrences',
+    [],
+  );
   const [previewLoading, setPreviewLoading] = useState(false);
   const [allBackgrounds, setAllBackgrounds] = useState<BackgroundInfo[]>([]);
-  const [editMode, setEditMode] = useState(false);
-  const [editedVideoFilename, setEditedVideoFilename] = useState<string>('');
+  const [editMode, setEditMode] = usePersistedState('worshipVideo.editMode', false);
+  const [backgroundsExpanded, setBackgroundsExpanded] = usePersistedState(
+    'worshipVideo.backgroundsExpanded',
+    true,
+  );
 
   // Optional sheet-music overlay: user uploads a score PNG/PDF, we run OMR and
   // the renderer shows the matching snippet on each slide. Both modes share
   // the same upload — switching only re-runs analyze against the cached file.
-  const [sheetFile, setSheetFile] = useState<File | null>(null);
-  const [sheetSession, setSheetSession] = useState<string | null>(null);
-  const [sheetCrops, setSheetCrops] = useState<SheetCrop[]>([]);
+  const [sheetFile, setSheetFile] = usePersistedFile('worshipVideo.sheetFile');
+  const [sheetSession, setSheetSession] = usePersistedState<string | null>(
+    'worshipVideo.sheetSession',
+    null,
+  );
+  const [sheetCrops, setSheetCrops] = usePersistedState<SheetCrop[]>(
+    'worshipVideo.sheetCrops',
+    [],
+  );
   const [sheetAnalyzing, setSheetAnalyzing] = useState(false);
   const [sheetMode, setSheetMode] = usePersistedState<SheetMode>('worshipVideo.sheetMode', 'rebuild');
   const sheetInputRef = useRef<HTMLInputElement>(null);
 
-  const pollRef = useRef<number | null>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const lyricsFileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    return () => {
-      if (pollRef.current !== null) window.clearInterval(pollRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     getBackgrounds().then(setAllBackgrounds).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!job || !['pending', 'processing'].includes(job.status)) return;
+    const poll = window.setInterval(() => {
+      void getVideoJob(job.job_id)
+        .then((latest) => setJob((current) => mergeVideoJobStatus(current, latest)))
+        .catch(() => {});
+    }, 2000);
+    return () => window.clearInterval(poll);
+  }, [job, setJob]);
+
   useResumeSnapshot<Partial<{
     title: string;
+    titleEn: string;
+    collectionZh: string;
+    collectionEn: string;
     composer: string;
     language: string;
     lyrics: string;
@@ -137,15 +212,23 @@ export default function WorshipVideoPage() {
     youtubeUrl: string;
     usePptBackgrounds: boolean;
     karaokeMode: boolean;
+    backgroundMotion: boolean;
+    lyricLeadSeconds: number;
+    showEndSlide: boolean;
     showPageNumbers: boolean;
     maxLines: number;
     maxWidth: number;
     primaryFontSize: number | null;
     secondaryFontSize: number | null;
     lineSpacing: number | null;
+    chineseLineSpacing: number | null;
+    englishLineSpacing: number | null;
   }>>('worship-video', (payload) => {
     const s = payload.snapshot;
     if (s.title != null) setTitle(s.title);
+    if (s.titleEn != null) setTitleEn(s.titleEn);
+    if (s.collectionZh != null) setCollectionZh(s.collectionZh);
+    if (s.collectionEn != null) setCollectionEn(s.collectionEn);
     if (s.composer != null) setComposer(s.composer);
     if (s.language != null) setLanguage(s.language);
     if (s.lyrics != null) setLyrics(s.lyrics);
@@ -154,12 +237,21 @@ export default function WorshipVideoPage() {
     if (s.youtubeUrl != null) setYoutubeUrl(s.youtubeUrl);
     if (s.usePptBackgrounds != null) setUsePptBackgrounds(s.usePptBackgrounds);
     if (s.karaokeMode != null) setKaraokeMode(s.karaokeMode);
+    if (s.backgroundMotion != null) setBackgroundMotion(s.backgroundMotion);
+    if (s.lyricLeadSeconds != null) setLyricLeadSeconds(s.lyricLeadSeconds);
+    if (s.showEndSlide != null) setShowEndSlide(s.showEndSlide);
     if (s.showPageNumbers != null) setShowPageNumbers(s.showPageNumbers);
     if (s.maxLines != null) setMaxLines(s.maxLines);
     if (s.maxWidth != null) setMaxWidth(s.maxWidth);
     if (s.primaryFontSize != null) setPrimaryFontSize(s.primaryFontSize);
     if (s.secondaryFontSize != null) setSecondaryFontSize(s.secondaryFontSize);
-    if (s.lineSpacing != null) setLineSpacing(s.lineSpacing);
+    const legacyLineSpacing = s.lineSpacing ?? null;
+    if (s.chineseLineSpacing != null || legacyLineSpacing != null) {
+      setChineseLineSpacing(s.chineseLineSpacing ?? legacyLineSpacing);
+    }
+    if (s.englishLineSpacing != null || legacyLineSpacing != null) {
+      setEnglishLineSpacing(s.englishLineSpacing ?? legacyLineSpacing);
+    }
     // If the analysis cache is still on disk, pre-seed analysisId so
     // "Edit video" works without re-analyzing. Filename from the prior
     // render lets the user see the completed state immediately.
@@ -167,30 +259,56 @@ export default function WorshipVideoPage() {
       setAnalysisId(payload.analysis_id);
     }
     if (payload.filename) {
-      setEditedVideoFilename(payload.filename);
+      setJob({
+        job_id: 'restored',
+        status: 'done',
+        stage: 'Complete',
+        progress: 100,
+        video_filename: payload.filename,
+      });
     }
   });
 
-  const startPolling = (jobId: string) => {
-    if (pollRef.current !== null) window.clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(async () => {
-      try {
-        const latest = await getVideoJob(jobId);
-        setJob((prev) => mergeVideoJobStatus(prev, latest));
-        if (latest.status === 'done' || latest.status === 'failed') {
-          if (pollRef.current !== null) {
-            window.clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
-          if (latest.status === 'failed' && latest.error) {
-            setError(latest.error);
-          }
-        }
-      } catch {
-        // Keep polling on transient errors
-      }
-    }, 2000);
-  };
+  useEffect(() => {
+    const payload = consumeVideoHandoff();
+    if (payload) {
+      setTitle(payload.title);
+      setTitleEn(payload.titleEn ?? '');
+      setCollectionZh(payload.collectionZh ?? '');
+      setCollectionEn(payload.collectionEn ?? '');
+      setComposer('');
+      setLanguage('auto');
+      setLyrics(payload.combinedLyrics);
+      setLyricsSource('paste');
+      setYoutubeUrl('');
+      setUsePptBackgrounds(false);
+      setLyricsFile(null);
+      setExtractedBgs([]);
+      setJob(null);
+      setAnalysisId('');
+      setAnalyzedKey('');
+      setPreviewSlides([]);
+      setOccurrences([]);
+      setEditMode(false);
+      setError('');
+      const shared = readWordLyricsDraft();
+      if (shared) setWordDraftSignature(wordLyricsDraftSignature(shared));
+      return;
+    }
+
+    const shared = readWordLyricsDraft();
+    if (!shared) return;
+    const signature = wordLyricsDraftSignature(shared);
+    if (signature === wordDraftSignature) return;
+    if (!title.trim()) setTitle(shared.title);
+    if (!titleEn.trim()) setTitleEn(shared.titleEn);
+    if (!collectionZh.trim()) setCollectionZh(shared.collectionZh);
+    if (!collectionEn.trim()) setCollectionEn(shared.collectionEn);
+    if (!lyrics.trim()) setLyrics(shared.combinedLyrics);
+    setWordDraftSignature(signature);
+    // The handoff is one-time and must win over any resumable library payload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSourceChange = (next: LyricsSource) => {
     setLyricsSource(next);
@@ -236,8 +354,8 @@ export default function WorshipVideoPage() {
         setExtractedBgs([]);
         setUsePptBackgrounds(false);
       }
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Extraction failed';
+    } catch (err: unknown) {
+      const msg = (err as ApiError).response?.data?.detail || 'Extraction failed';
       setError(msg);
     } finally {
       setExtracting(false);
@@ -298,14 +416,20 @@ export default function WorshipVideoPage() {
       setPreviewSlides(result.slides);
       setOccurrences(result.occurrences);
       setAnalyzedKey(previewKey);
+      setEditMode(true);
+      setJob(null);
       if (sheetUpload?.session_id) {
         setSheetSession(sheetUpload.session_id);
         void runSheetAnalyzeForSlides(sheetUpload.session_id, result.slides.length, sheetMode);
       } else {
         setSheetCrops([]);
       }
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Failed to analyze audio';
+    } catch (err: unknown) {
+      const apiError = err as ApiError;
+      const msg = apiError.response?.data?.detail
+        || (apiError.code === 'ECONNABORTED'
+          ? 'Audio analysis timed out after 30 minutes. The backend may still be finishing the result.'
+          : 'Failed to analyze audio');
       setError(msg);
     } finally {
       setPreviewLoading(false);
@@ -331,60 +455,49 @@ export default function WorshipVideoPage() {
     }
   };
 
-  const handleGenerate = async () => {
-    setError('');
-    if (!hasFreshPreview) {
-      setError('Please analyze the audio first and confirm the slide order');
-      return;
+  const handleClearCurrentContent = () => {
+    const shared = readWordLyricsDraft();
+    setWordDraftSignature(shared ? wordLyricsDraftSignature(shared) : '');
+    if (analysisId) {
+      void deleteWorshipAnalysis(analysisId).catch(() => {});
+    }
+    if (sheetSession) {
+      void deleteSheet(sheetSession).catch(() => {});
     }
 
-    setSubmitting(true);
-    setJob(null);
-    try {
-      const useExtracted = usePptBackgrounds && extractedBgs.length > 0;
-      const snapshot = {
-        title, composer, language, lyrics,
-        selectedBgIds, lyricsSource, youtubeUrl,
-        usePptBackgrounds, karaokeMode, showPageNumbers,
-        maxLines, maxWidth,
-        primaryFontSize, secondaryFontSize, lineSpacing,
-      };
-      const created = await createWorshipVideo(
-        analysisId,
-        title,
-        composer,
-        !useExtracted && selectedBgIds.length > 0 ? selectedBgIds : undefined,
-        useExtracted ? extractedBgs.map((b) => b.filename) : undefined,
-        karaokeMode,
-        primaryFontSize ?? undefined,
-        secondaryFontSize ?? undefined,
-        lineSpacing ?? undefined,
-        showPageNumbers,
-        snapshot,
-        template.paddingStyle,
-        sheetSession && sheetCrops.length > 0
-          ? { sessionId: sheetSession, cropFilenames: sheetCrops.map((c) => c.filename) }
-          : undefined,
-      );
-      setJob(created);
-      startPolling(created.job_id);
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Failed to start video job';
-      setError(msg);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleReset = () => {
-    if (pollRef.current !== null) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
+    setTitle('');
+    setTitleEn('');
+    setCollectionZh('');
+    setCollectionEn('');
+    setComposer('');
+    setLanguage('auto');
+    setLyrics('');
+    setSelectedBgIds([]);
+    setLyricsSource('paste');
+    setYoutubeUrl('');
+    setUsePptBackgrounds(false);
+    setAudioFile(null);
+    setLyricsFile(null);
+    setExtractedBgs([]);
+    setAnalysisId('');
+    setAnalyzedKey('');
+    setPreviewSlides([]);
+    setOccurrences([]);
     setJob(null);
     setError('');
     setEditMode(false);
-    setEditedVideoFilename('');
+    setSheetFile(null);
+    setSheetSession(null);
+    setSheetCrops([]);
+    setBackgroundsExpanded(true);
+    if (analysisId) {
+      window.sessionStorage.removeItem(`worshipVideo.timingEdits.${analysisId}`);
+      window.sessionStorage.removeItem(`worshipVideo.bgOverrides.${analysisId}`);
+    }
+
+    if (audioInputRef.current) audioInputRef.current.value = '';
+    if (lyricsFileInputRef.current) lyricsFileInputRef.current.value = '';
+    if (sheetInputRef.current) sheetInputRef.current.value = '';
   };
 
   /** Pool of backgrounds the preview + player + renderer will cycle
@@ -403,16 +516,36 @@ export default function WorshipVideoPage() {
       }));
     }
     if (selectedBgIds.length > 0) {
-      return allBackgrounds.filter((bg) => selectedBgIds.includes(bg.id));
+      const byId = new Map(allBackgrounds.map((bg) => [bg.id, bg]));
+      return selectedBgIds
+        .map((id) => byId.get(id))
+        .filter((bg): bg is BackgroundInfo => bg != null);
     }
     return allBackgrounds;
   }, [usePptBackgrounds, extractedBgs, selectedBgIds, allBackgrounds]);
 
+  const selectedBackgrounds = useMemo(() => {
+    const byId = new Map(allBackgrounds.map((bg) => [bg.id, bg]));
+    return selectedBgIds
+      .map((id) => byId.get(id))
+      .filter((bg): bg is BackgroundInfo => bg != null);
+  }, [allBackgrounds, selectedBgIds]);
+
+  const moveSelectedBackground = (index: number, delta: -1 | 1) => {
+    const target = index + delta;
+    if (target < 0 || target >= selectedBgIds.length) return;
+    const reordered = [...selectedBgIds];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    setSelectedBgIds(reordered);
+  };
+
   const previewBackgroundForSlide = (
-    i: number,
+    slide: AnalyzedSlide,
   ): { url: string; isVideo: boolean } | null => {
     if (currentBackgroundPool.length === 0) return null;
-    const bg = currentBackgroundPool[i % currentBackgroundPool.length];
+    const bg = currentBackgroundPool[
+      slide.background_group_idx % currentBackgroundPool.length
+    ];
     return { url: bg.url, isVideo: bg.media_type === 'video' };
   };
 
@@ -433,9 +566,15 @@ export default function WorshipVideoPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold text-white mb-1">{t.title}</h2>
-        <p className="text-sm text-slate-400">{t.subtitle}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="mb-1 text-2xl font-bold text-white">{t.title}</h2>
+          <p className="text-sm text-slate-400">{t.subtitle}</p>
+        </div>
+        <ClearCurrentButton
+          onClick={handleClearCurrentContent}
+          disabled={previewLoading || extracting || sheetAnalyzing || !!isRunning}
+        />
       </div>
 
       <div>
@@ -464,19 +603,59 @@ export default function WorshipVideoPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <section className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+        <h3 className="mb-4 text-sm font-semibold text-slate-200">歌曲信息</h3>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
-            {t.songTitle}
+            {titleLabels.titleZh}
           </label>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t.songTitlePlaceholder}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
+            className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900/70 px-4 text-white placeholder-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-500"
           />
         </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            {titleLabels.titleEn}
+          </label>
+          <input
+            type="text"
+            value={titleEn}
+            onChange={(e) => setTitleEn(e.target.value)}
+            placeholder="I Am Coming, Lord"
+            className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900/70 px-4 text-white placeholder-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            {titleLabels.collectionZh}
+          </label>
+          <input
+            type="text"
+            value={collectionZh}
+            onChange={(e) => setCollectionZh(e.target.value)}
+            placeholder="教會聖詩 #450"
+            className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900/70 px-4 text-white placeholder-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            {titleLabels.collectionEn}
+          </label>
+          <input
+            type="text"
+            value={collectionEn}
+            onChange={(e) => setCollectionEn(e.target.value)}
+            placeholder="Hymn's for God's People"
+            className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900/70 px-4 text-white placeholder-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-500"
+          />
+        </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
             {t.composer}
@@ -486,24 +665,36 @@ export default function WorshipVideoPage() {
             value={composer}
             onChange={(e) => setComposer(e.target.value)}
             placeholder={t.composerPlaceholder}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent"
+            className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900/70 px-4 text-white placeholder-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-500"
           />
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
             {t.audioLanguageLabel}
           </label>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
-          >
-            <option value="auto">{t.audioLanguageAuto}</option>
-            <option value="zh">{t.audioLanguageZh}</option>
-            <option value="en">{t.audioLanguageEn}</option>
-          </select>
+          <div className="relative">
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              className="h-11 w-full appearance-none rounded-lg border border-slate-600 bg-slate-900/70 px-4 pr-10 text-white focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gold-500"
+            >
+              <option value="auto">{t.audioLanguageAuto}</option>
+              <option value="zh">{t.audioLanguageZh}</option>
+              <option value="en">{t.audioLanguageEn}</option>
+            </select>
+            <svg
+              aria-hidden="true"
+              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m6 9 6 6 6-6" />
+            </svg>
+          </div>
         </div>
-      </div>
+        </div>
+      </section>
 
       <div>
         <label className="block text-sm font-medium text-slate-300 mb-2">
@@ -607,48 +798,158 @@ export default function WorshipVideoPage() {
         />
       </div>
 
-      {extractedBgs.length > 0 && (
-        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-          <label className="flex items-center gap-2 cursor-pointer mb-3">
-            <input
-              type="checkbox"
-              checked={usePptBackgrounds}
-              onChange={(e) => setUsePptBackgrounds(e.target.checked)}
-              className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
-            />
-            <span className="text-sm font-medium text-slate-300">
-              {t.usePptBackgrounds(extractedBgs.length)}
-            </span>
-          </label>
-          <div className="grid grid-cols-4 md:grid-cols-6 gap-2">
-            {extractedBgs.map((bg) => (
-              <div
-                key={bg.filename}
-                className={`aspect-video rounded overflow-hidden border ${
-                  usePptBackgrounds ? 'border-gold-500' : 'border-slate-600 opacity-60'
-                }`}
-              >
-                <img src={bg.url} alt={bg.filename} className="w-full h-full object-cover" />
-              </div>
-            ))}
+      <section className="rounded-xl border border-slate-700 bg-slate-800/40">
+        <button
+          type="button"
+          onClick={() => setBackgroundsExpanded((value) => !value)}
+          className="flex w-full items-center justify-between gap-4 rounded-xl px-4 py-4 text-left transition-colors hover:bg-slate-800/60"
+          aria-expanded={backgroundsExpanded}
+        >
+          <div>
+            <h3 className="text-sm font-semibold text-slate-200">{t.backgrounds}</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              每个 Verse + Chorus 使用同一背景，并按下方已选顺序轮换。
+            </p>
           </div>
-          <p className="text-xs text-slate-500 mt-2">{t.pptBgsNote}</p>
+          <span className="flex shrink-0 items-center gap-2 text-xs text-slate-400">
+            {backgroundsExpanded ? '收起' : `展开 · 已选 ${selectedBackgrounds.length}`}
+            <svg
+              className={`h-4 w-4 transition-transform ${backgroundsExpanded ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m6 9 6 6 6-6" />
+            </svg>
+          </span>
+        </button>
+
+        {backgroundsExpanded && (
+          <div className="space-y-4 border-t border-slate-700 px-4 pb-4 pt-4">
+            {extractedBgs.length > 0 && (
+              <div className="rounded-lg border border-slate-700 bg-slate-900/30 p-3">
+                <label className="mb-3 flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={usePptBackgrounds}
+                    onChange={(e) => setUsePptBackgrounds(e.target.checked)}
+                    className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
+                  />
+                  <span className="text-sm font-medium text-slate-300">
+                    {t.usePptBackgrounds(extractedBgs.length)}
+                  </span>
+                </label>
+                <div className="grid grid-cols-4 gap-2 md:grid-cols-6">
+                  {extractedBgs.map((bg) => (
+                    <div
+                      key={bg.filename}
+                      className={`aspect-video overflow-hidden rounded border ${
+                        usePptBackgrounds ? 'border-gold-500' : 'border-slate-600 opacity-60'
+                      }`}
+                    >
+                      <img src={bg.url} alt={bg.filename} className="h-full w-full object-cover" />
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-slate-500">{t.pptBgsNote}</p>
+              </div>
+            )}
+
+            {!(usePptBackgrounds && extractedBgs.length > 0) && (
+              <>
+                <BackgroundPicker
+                  selectedIds={selectedBgIds}
+                  onSelect={setSelectedBgIds}
+                />
+
+                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-medium text-slate-200">已选背景</h4>
+                      <p className="mt-1 text-xs text-slate-500">
+                        使用左右箭头调整视频中的轮换顺序；未选择时使用整个背景库。
+                      </p>
+                    </div>
+                    {selectedBackgrounds.length > 0 && (
+                      <span className="shrink-0 rounded-full bg-gold-600/20 px-2 py-1 text-xs text-gold-300">
+                        {selectedBackgrounds.length} 个
+                      </span>
+                    )}
+                  </div>
+
+                  {selectedBackgrounds.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-slate-700 px-4 py-6 text-center text-xs text-slate-500">
+                      尚未选择背景
+                    </div>
+                  ) : (
+                    <div className="flex gap-3 overflow-x-auto pb-2">
+                      {selectedBackgrounds.map((bg, index) => (
+                        <div
+                          key={bg.id}
+                          className="w-48 shrink-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950"
+                        >
+                          <div className="relative aspect-video overflow-hidden bg-black">
+                            {bg.media_type === 'video' ? (
+                              <LazyVideoTile src={bg.url} />
+                            ) : (
+                              <img src={bg.url} alt={bg.name} className="h-full w-full object-cover" />
+                            )}
+                            <span className="absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                              {index + 1}
+                            </span>
+                          </div>
+                          <div className="p-2">
+                            <p className="truncate text-xs text-slate-300">{bg.name}</p>
+                            <div className="mt-2 grid grid-cols-3 gap-1">
+                              <button
+                                type="button"
+                                onClick={() => moveSelectedBackground(index, -1)}
+                                disabled={index === 0}
+                                className="rounded bg-slate-800 py-1 text-xs text-slate-300 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+                                aria-label={`将 ${bg.name} 向前移动`}
+                              >
+                                ←
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveSelectedBackground(index, 1)}
+                                disabled={index === selectedBackgrounds.length - 1}
+                                className="rounded bg-slate-800 py-1 text-xs text-slate-300 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+                                aria-label={`将 ${bg.name} 向后移动`}
+                              >
+                                →
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBgIds(selectedBgIds.filter((id) => id !== bg.id))}
+                                className="rounded bg-red-950/70 py-1 text-xs text-red-300 hover:bg-red-900"
+                                aria-label={`删除 ${bg.name}`}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            <FreeBackgroundResources />
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+        <div className="mb-4">
+          <h3 className="text-sm font-semibold text-slate-200">歌词版式</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            中英文歌词按行识别，可分别设置字号；自动会使用中文 40pt、英文 32pt。
+          </p>
         </div>
-      )}
-
-      {!(usePptBackgrounds && extractedBgs.length > 0) && (
-        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-          <h3 className="text-sm font-medium text-slate-300 mb-3">{t.backgrounds}</h3>
-          <BackgroundPicker
-            selectedIds={selectedBgIds}
-            onSelect={setSelectedBgIds}
-          />
-        </div>
-      )}
-
-      <FreeBackgroundResources />
-
-      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-400">{t.maxLines}:</label>
           <select
@@ -656,7 +957,7 @@ export default function WorshipVideoPage() {
             onChange={(e) => setMaxLines(Number(e.target.value))}
             className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"
           >
-            {[4, 5, 6, 7, 8].map((n) => (
+            {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
               <option key={n} value={n}>{n}</option>
             ))}
           </select>
@@ -668,7 +969,7 @@ export default function WorshipVideoPage() {
             onChange={(e) => setMaxWidth(Number(e.target.value))}
             className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"
           >
-            {[8, 10, 12, 14, 16, 20].map((n) => (
+            {[6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40].map((n) => (
               <option key={n} value={n}>{n}</option>
             ))}
           </select>
@@ -678,10 +979,36 @@ export default function WorshipVideoPage() {
           setPrimaryFontSize={setPrimaryFontSize}
           secondaryFontSize={secondaryFontSize}
           setSecondaryFontSize={setSecondaryFontSize}
-          lineSpacing={lineSpacing}
-          setLineSpacing={setLineSpacing}
-          showSecondary={false}
+          lineSpacing={chineseLineSpacing}
+          setLineSpacing={setChineseLineSpacing}
+          secondaryLineSpacing={englishLineSpacing}
+          setSecondaryLineSpacing={setEnglishLineSpacing}
+          showSecondary
+          primaryLabel="中文字号："
+          secondaryLabel="英文字号："
+          lineSpacingLabel="中文行距："
+          secondaryLineSpacingLabel="英文行距："
         />
+        <label className="flex items-center gap-2">
+          <span className="text-xs text-slate-400">歌词提前</span>
+          <input
+            type="number"
+            min="0"
+            max="30"
+            step="0.1"
+            value={lyricLeadSeconds}
+            onChange={(e) => {
+              const value = Number(e.target.value);
+              if (Number.isFinite(value)) {
+                setLyricLeadSeconds(Math.max(0, Math.min(value, 30)));
+              }
+            }}
+            className="w-20 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-white"
+          />
+          <span className="text-xs text-slate-500">秒完整显示</span>
+        </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-3 border-t border-slate-700 pt-4">
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -689,9 +1016,9 @@ export default function WorshipVideoPage() {
             onChange={(e) => setKaraokeMode(e.target.checked)}
             className="rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500"
           />
-          <span className="text-sm text-slate-300">
+          <span className="text-xs text-slate-400">
             {t.karaoke}
-            <span className="text-xs text-slate-500 ml-1.5">{t.karaokeHint}</span>
+            <span className="ml-1.5 text-slate-500">{t.karaokeHint}</span>
           </span>
         </label>
         <label className="flex items-center gap-1.5 cursor-pointer">
@@ -703,7 +1030,28 @@ export default function WorshipVideoPage() {
           />
           <span className="text-xs text-slate-400">{t.pageNumber}</span>
         </label>
-      </div>
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={backgroundMotion}
+            onChange={(e) => setBackgroundMotion(e.target.checked)}
+            className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
+          />
+          <span className="text-xs text-slate-400">静态背景轻微推拉</span>
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showEndSlide}
+            onChange={(e) => setShowEndSlide(e.target.checked)}
+            className="rounded border-slate-600 bg-slate-800 text-gold-600 focus:ring-gold-500"
+          />
+          <span className="text-xs text-slate-400">
+            添加尾页（标题内容，停留 3 秒）
+          </span>
+        </label>
+        </div>
+      </section>
 
       <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -798,10 +1146,11 @@ export default function WorshipVideoPage() {
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
             {previewSlides.map((slide, i) => {
-              const pt = primaryFontSize ?? (language.startsWith('zh') ? 40 : 36);
-              const cqi = (pt / 540) * (9 / 16) * 100;
-              const lh = lineSpacing ?? (language.startsWith('zh') ? 1.5 : 1.3);
-              const bg = previewBackgroundForSlide(i);
+              const chinesePt = primaryFontSize ?? 40;
+              const englishPt = secondaryFontSize ?? 32;
+              const chineseCqi = (chinesePt / 540) * (9 / 16) * 100;
+              const englishCqi = (englishPt / 540) * (9 / 16) * 100;
+              const bg = previewBackgroundForSlide(slide);
               return (
                 <div
                   key={i}
@@ -846,15 +1195,21 @@ export default function WorshipVideoPage() {
                         className="max-h-[45%] max-w-full object-contain bg-white/95 rounded"
                       />
                     )}
-                    <p
-                      className="relative text-white text-center whitespace-pre-line font-bold drop-shadow-lg"
-                      style={{
-                        fontSize: `${cqi}cqi`,
-                        lineHeight: lh,
-                      }}
-                    >
-                      {slide.text}
-                    </p>
+                    <div className="relative text-center font-bold text-white drop-shadow-lg">
+                      {slide.text.split('\n').map((line, lineIndex) => (
+                        <div
+                          key={lineIndex}
+                          style={{
+                            fontSize: `${/[\u3400-\u9fff]/.test(line) ? chineseCqi : englishCqi}cqi`,
+                            lineHeight: /[\u3400-\u9fff]/.test(line)
+                              ? (chineseLineSpacing ?? 1.5)
+                              : (englishLineSpacing ?? 1.3),
+                          }}
+                        >
+                          {line || '\u00a0'}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               );
@@ -864,21 +1219,17 @@ export default function WorshipVideoPage() {
       )}
 
       <button
-        onClick={handleGenerate}
-        disabled={
-          submitting ||
-          !!isRunning ||
-          !hasFreshPreview
-        }
+        onClick={() => setEditMode(true)}
+        disabled={!!isRunning || !hasFreshPreview}
         className="w-full bg-gold-600 hover:bg-gold-700 disabled:opacity-50 text-white py-3 rounded-lg font-medium text-lg transition-colors"
       >
-        {submitting
-          ? t.starting
-          : isRunning
-            ? t.generating
-            : hasFreshPreview
-              ? t.generateVideo
-              : t.analyzeToEnable}
+        {isRunning
+          ? t.generating
+          : hasFreshPreview
+            ? editMode
+              ? '校准预览已打开'
+              : '打开校准预览并生成视频'
+            : t.analyzeToEnable}
       </button>
 
       <p className="text-xs text-slate-500 -mt-4">{t.firstRunHint}</p>
@@ -908,15 +1259,15 @@ export default function WorshipVideoPage() {
         <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-4">
           <h3 className="text-sm font-medium text-slate-300">{t.videoReady}</h3>
           <video
-            key={editedVideoFilename || job.video_filename}
+            key={job.video_filename}
             controls
             preload="metadata"
             className="w-full rounded-lg bg-black"
-            src={`${getVideoDownloadUrl(editedVideoFilename || job.video_filename)}#t=0.1`}
+            src={`${getVideoDownloadUrl(job.video_filename)}#t=0.1`}
           />
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={() => downloadFile(editedVideoFilename || job.video_filename!)}
+              onClick={() => downloadFile(job.video_filename!)}
               className="bg-gold-600 hover:bg-gold-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
               {t.downloadMp4}
@@ -936,7 +1287,7 @@ export default function WorshipVideoPage() {
               {editMode ? t.closeEditor : t.editVideo}
             </button>
             <button
-              onClick={handleReset}
+              onClick={handleClearCurrentContent}
               className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
               {t.newVideo}
@@ -945,18 +1296,31 @@ export default function WorshipVideoPage() {
         </div>
       )}
 
-      {isDone && editMode && analysisId && (
+      {hasFreshPreview && editMode && analysisId && (
         <VideoEditor
+          key={analysisId}
           analysisId={analysisId}
           title={title}
+          titleEn={titleEn}
+          collectionZh={collectionZh}
+          collectionEn={collectionEn}
           composer={composer}
+          onTitleChange={setTitle}
+          onTitleEnChange={setTitleEn}
+          onCollectionZhChange={setCollectionZh}
+          onCollectionEnChange={setCollectionEn}
+          onComposerChange={setComposer}
           allBackgrounds={allBackgrounds}
           initialBackgroundPool={currentBackgroundPool}
           karaokeMode={karaokeMode}
           primaryFontSize={primaryFontSize ?? undefined}
           secondaryFontSize={secondaryFontSize ?? undefined}
-          lineSpacingMultiplier={lineSpacing ?? undefined}
+          primaryLineSpacingMultiplier={chineseLineSpacing ?? undefined}
+          secondaryLineSpacingMultiplier={englishLineSpacing ?? undefined}
           showPageNumbers={showPageNumbers}
+          backgroundMotion={backgroundMotion}
+          lyricLeadSeconds={lyricLeadSeconds}
+          showEndSlide={showEndSlide}
           paddingStyle={template.paddingStyle}
           selectedBgIds={selectedBgIds}
           extractedBgFilenames={
@@ -964,7 +1328,45 @@ export default function WorshipVideoPage() {
               ? extractedBgs.map((b) => b.filename)
               : undefined
           }
-          onRerendered={setEditedVideoFilename}
+          sheet={
+            sheetSession && sheetCrops.length > 0
+              ? {
+                  sessionId: sheetSession,
+                  cropFilenames: sheetCrops.map((crop) => crop.filename),
+                  cropUrls: sheetCrops.map((crop) => crop.url),
+                }
+              : undefined
+          }
+          inputSnapshot={{
+            title,
+            titleEn,
+            collectionZh,
+            collectionEn,
+            composer,
+            language,
+            lyrics,
+            selectedBgIds,
+            lyricsSource,
+            youtubeUrl,
+            usePptBackgrounds,
+            karaokeMode,
+            showPageNumbers,
+            backgroundMotion,
+            lyricLeadSeconds,
+            showEndSlide,
+            maxLines,
+            maxWidth,
+            primaryFontSize,
+            secondaryFontSize,
+            chineseLineSpacing,
+            englishLineSpacing,
+          }}
+          onRendered={(latest) => {
+            setJob(latest);
+            if (latest.status === 'failed' && latest.error) {
+              setError(latest.error);
+            }
+          }}
           onClose={() => setEditMode(false)}
         />
       )}

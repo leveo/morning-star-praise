@@ -8,6 +8,101 @@ const api = axios.create({
   baseURL: '/api',
 });
 
+export function getApiErrorDetail(error: unknown): string | undefined {
+  if (!axios.isAxiosError<{ detail?: unknown }>(error)) {
+    return undefined;
+  }
+
+  const detail = error.response?.data?.detail;
+  return typeof detail === 'string' ? detail : undefined;
+}
+
+export interface DocxLyricsWarning {
+  code: string;
+  message: string;
+  severity: 'warning' | 'error';
+  section_id: string | null;
+}
+
+export interface DocxLyricsSection {
+  id: string;
+  kind: 'verse' | 'chorus';
+  number: number | null;
+  zh_lines: string[];
+  en_lines: string[];
+  source_fragment_ids: string[];
+  amen_zh: string | null;
+  amen_en: string | null;
+}
+
+export type DocxLyricsLayoutKind =
+  | 'language_blocks'
+  | 'stanza_interleaved'
+  | 'line_interleaved'
+  | 'table_columns';
+
+export interface DocxLyricsUnresolvedFragment {
+  id: string;
+  text: string;
+  location: string;
+  language_guess: 'zh' | 'en' | 'unknown';
+  reason: string;
+}
+
+export interface DocxLyricsParseCandidate {
+  id: string;
+  layout_kind: DocxLyricsLayoutKind;
+  confidence: number;
+  reasons: string[];
+  sections: DocxLyricsSection[];
+  sequence: string[];
+  unresolved_fragments: DocxLyricsUnresolvedFragment[];
+  classified_fragment_count: number;
+  total_fragment_count: number;
+}
+
+export interface DocxLyricsImport {
+  source_filename: string;
+  output_filename: string;
+  song_number: string;
+  title_zh: string;
+  title_en: string;
+  collection_zh: string;
+  collection_en: string;
+  sections: DocxLyricsSection[];
+  sequence: string[];
+  primary_lyrics: string;
+  secondary_lyrics: string;
+  combined_lyrics: string;
+  warnings: DocxLyricsWarning[];
+  has_blocking_errors: boolean;
+  layout_kind: DocxLyricsLayoutKind;
+  confidence: number;
+  requires_confirmation: boolean;
+  review_confirmed: boolean;
+  candidate_layouts: DocxLyricsParseCandidate[];
+  unresolved_fragments: DocxLyricsUnresolvedFragment[];
+  classified_fragment_count: number;
+  total_fragment_count: number;
+  ignored_fragment_ids: string[];
+}
+
+export interface DocxLyricsExportRequest {
+  source_filename: string;
+  song_number: string;
+  title_zh: string;
+  title_en: string;
+  collection_zh: string;
+  collection_en: string;
+  sections: DocxLyricsSection[];
+}
+
+export interface TitleMetadata {
+  titleEn?: string;
+  collectionZh?: string;
+  collectionEn?: string;
+}
+
 // Attach X-LLM-* headers from localStorage settings on every request. API
 // keys never travel over these headers — the backend reads keys from .env.
 api.interceptors.request.use((config) => {
@@ -54,6 +149,25 @@ export async function parseLyricsBilingual(
   return data;
 }
 
+export async function importDocxLyrics(file: File): Promise<DocxLyricsImport> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<DocxLyricsImport>('/lyrics/import-docx', form, {
+    timeout: 30_000,
+  });
+  return data;
+}
+
+export async function exportDocxLyrics(
+  request: DocxLyricsExportRequest,
+): Promise<Blob> {
+  const { data } = await api.post('/lyrics/export-docx', request, {
+    responseType: 'blob',
+    timeout: 30_000,
+  });
+  return data as Blob;
+}
+
 export async function generatePPT(
   title: string,
   slides: SlideData[],
@@ -66,9 +180,13 @@ export async function generatePPT(
   lineSpacingMultiplier?: number,
   paddingStyle: 'dark' | 'light' = 'dark',
   sheet?: { sessionId: string; cropNames: string[] },
+  titleMetadata?: TitleMetadata,
 ): Promise<PPTGenerateResponse> {
   const { data } = await api.post<PPTGenerateResponse>('/ppt/generate', {
     title,
+    title_en: titleMetadata?.titleEn,
+    collection_zh: titleMetadata?.collectionZh,
+    collection_en: titleMetadata?.collectionEn,
     composer,
     slides,
     language,
@@ -335,7 +453,11 @@ export interface AnalyzedSlide {
   text: string;
   start_sec: number;
   end_sec: number;
+  sung_start_sec: number;
+  sung_end_sec: number;
+  lead_sec: number;
   stanza_idx: number;
+  background_group_idx: number;
 }
 
 export interface AnalyzedStanzaOccurrence {
@@ -366,10 +488,14 @@ export interface WorshipPlanResponse {
     occurrences: { stanza_idx: number; start_sec: number; end_sec: number; score: number }[];
     lyric_chunks: string[];
     chunk_stanza_idx: number[];
+    chunk_background_group: number[];
     timed: {
       text: string;
       start: number;
       end: number;
+      sung_start: number;
+      sung_end: number;
+      lead: number;
       units?: { text: string; startSec: number | null; isLineBreak: boolean }[];
     }[];
   };
@@ -387,17 +513,27 @@ export async function getWorshipPlan(
 export interface RerenderRequest {
   analysisId: string;
   title: string;
+  titleEn?: string;
+  collectionZh?: string;
+  collectionEn?: string;
   composer: string;
   backgroundIds?: number[];
   extractedBackgroundPaths?: string[];
   karaokeMode?: boolean;
   primaryFontSize?: number;
   secondaryFontSize?: number;
+  /** Legacy shared spacing retained for saved callers. */
   lineSpacingMultiplier?: number;
+  primaryLineSpacingMultiplier?: number;
+  secondaryLineSpacingMultiplier?: number;
   showPageNumbers?: boolean;
+  backgroundMotion?: boolean;
+  lyricLeadSeconds?: number;
+  showEndSlide?: boolean;
   paddingStyle?: 'dark' | 'light';
-  timingOverrides?: { idx: number; start_sec: number; end_sec: number }[];
+  timingOverrides?: { idx: number; sung_start_sec: number }[];
   backgroundOverrides?: { idx: number; background_id?: number }[];
+  sheet?: { sessionId: string; cropFilenames: string[] };
   inputSnapshot?: Record<string, unknown>;
 }
 
@@ -407,6 +543,9 @@ export async function rerenderWorshipVideo(
   const { data } = await api.post<VideoJobStatus>('/videos/rerender', {
     analysis_id: req.analysisId,
     title: req.title,
+    title_en: req.titleEn,
+    collection_zh: req.collectionZh,
+    collection_en: req.collectionEn,
     composer: req.composer,
     background_ids: req.backgroundIds,
     extracted_background_paths: req.extractedBackgroundPaths,
@@ -414,10 +553,17 @@ export async function rerenderWorshipVideo(
     primary_font_size: req.primaryFontSize,
     secondary_font_size: req.secondaryFontSize,
     line_spacing_multiplier: req.lineSpacingMultiplier,
+    primary_line_spacing_multiplier: req.primaryLineSpacingMultiplier,
+    secondary_line_spacing_multiplier: req.secondaryLineSpacingMultiplier,
     show_page_numbers: req.showPageNumbers ?? false,
+    background_motion: req.backgroundMotion ?? false,
+    lyric_lead_seconds: req.lyricLeadSeconds ?? 0.5,
+    show_end_slide: req.showEndSlide ?? false,
     padding_style: req.paddingStyle ?? 'dark',
     timing_overrides: req.timingOverrides ?? [],
     background_overrides: req.backgroundOverrides ?? [],
+    sheet_session_id: req.sheet?.sessionId,
+    sheet_crop_filenames: req.sheet?.cropFilenames,
     input_snapshot: req.inputSnapshot,
   });
   return data;
@@ -436,11 +582,11 @@ export async function analyzeWorshipAudio(
   formData.append('language', language);
   formData.append('max_lines_per_slide', String(maxLinesPerSlide));
   formData.append('max_width_per_row', String(maxWidthPerRow));
-  // Whisper transcription can take a while on long songs — give it headroom.
+  // CPU-only Whisper can take longer than ten minutes even for a short hymn.
   const { data } = await api.post<AnalyzeAudioResponse>(
     '/videos/analyze',
     formData,
-    { timeout: 600_000 }
+    { timeout: 1_800_000 }
   );
   return data;
 }
@@ -456,13 +602,22 @@ export async function createWorshipVideo(
   secondaryFontSize?: number,
   lineSpacingMultiplier?: number,
   showPageNumbers: boolean = false,
+  backgroundMotion: boolean = false,
   inputSnapshot?: Record<string, unknown>,
   paddingStyle: 'dark' | 'light' = 'dark',
   sheet?: { sessionId: string; cropFilenames: string[] },
+  lyricLeadSeconds: number = 0.5,
+  showEndSlide: boolean = false,
+  primaryLineSpacingMultiplier?: number,
+  secondaryLineSpacingMultiplier?: number,
+  titleMetadata?: TitleMetadata,
 ): Promise<VideoJobStatus> {
   const formData = new FormData();
   formData.append('analysis_id', analysisId);
   formData.append('title', title);
+  if (titleMetadata?.titleEn) formData.append('title_en', titleMetadata.titleEn);
+  if (titleMetadata?.collectionZh) formData.append('collection_zh', titleMetadata.collectionZh);
+  if (titleMetadata?.collectionEn) formData.append('collection_en', titleMetadata.collectionEn);
   formData.append('composer', composer);
   if (backgroundIds && backgroundIds.length > 0) {
     formData.append('background_ids', backgroundIds.join(','));
@@ -485,8 +640,21 @@ export async function createWorshipVideo(
   if (lineSpacingMultiplier != null) {
     formData.append('line_spacing_multiplier', String(lineSpacingMultiplier));
   }
+  if (primaryLineSpacingMultiplier != null) {
+    formData.append('primary_line_spacing_multiplier', String(primaryLineSpacingMultiplier));
+  }
+  if (secondaryLineSpacingMultiplier != null) {
+    formData.append('secondary_line_spacing_multiplier', String(secondaryLineSpacingMultiplier));
+  }
   if (showPageNumbers) {
     formData.append('show_page_numbers', 'true');
+  }
+  if (backgroundMotion) {
+    formData.append('background_motion', 'true');
+  }
+  formData.append('lyric_lead_seconds', String(lyricLeadSeconds));
+  if (showEndSlide) {
+    formData.append('show_end_slide', 'true');
   }
   formData.append('padding_style', paddingStyle);
   if (inputSnapshot) {
@@ -503,6 +671,10 @@ export async function createWorshipVideo(
 export async function getVideoJob(jobId: string): Promise<VideoJobStatus> {
   const { data } = await api.get<VideoJobStatus>(`/videos/job/${jobId}`);
   return data;
+}
+
+export async function deleteWorshipAnalysis(analysisId: string): Promise<void> {
+  await api.delete(`/videos/analyses/${analysisId}`);
 }
 
 export function getVideoDownloadUrl(filename: string): string {

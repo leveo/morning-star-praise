@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Leo Song
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import BackgroundPicker from '../components/ppt/BackgroundPicker';
 import FontSettings from '../components/ppt/FontSettings';
 import SlideDeck from '../components/ppt/SlideDeck';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
 import UsageBadge from '../components/shared/UsageBadge';
+import ClearCurrentButton from '../components/shared/ClearCurrentButton';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
 import { useUsageTracker } from '../hooks/useUsageTracker';
@@ -16,6 +17,7 @@ import {
   generatePPT,
   getDownloadUrl,
   convertChinese,
+  getApiErrorDetail,
   type FrameInfo,
 } from '../api/client';
 import type { SlideData } from '../types';
@@ -63,18 +65,31 @@ export default function YouTubePage() {
   const [error, setError] = useState('');
   const progressTimer = useRef<number | null>(null);
 
-  const [slides, setSlides] = useState<SlideData[]>([]);
+  const [slides, setSlides] = usePersistedState<SlideData[]>('youtube.slides', []);
 
   // Frames mode state — not persisted because frame image URLs point at
   // UPLOADS_DIR/<work_dir>/ which gets cleaned up after 1 hour, so stale
   // persisted entries would 404 anyway.
-  const [frames, setFrames] = useState<FrameInfo[]>([]);
-  const [, setWorkDir] = useState('');
-  const [selectedFrameIndices, setSelectedFrameIndices] = useState<Set<number>>(new Set());
+  const [frames, setFrames] = usePersistedState<FrameInfo[]>('youtube.frames', []);
+  const [, setWorkDir] = usePersistedState('youtube.workDir', '');
+  const [selectedFrameIndexList, setSelectedFrameIndexList] = usePersistedState<number[]>(
+    'youtube.selectedFrameIndices',
+    [],
+  );
+  const selectedFrameIndices = useMemo(
+    () => new Set(selectedFrameIndexList),
+    [selectedFrameIndexList],
+  );
+  const setSelectedFrameIndices = (next: Set<number>) => {
+    setSelectedFrameIndexList([...next].sort((a, b) => a - b));
+  };
 
   // Generation state (filenames expire — don't persist)
-  const [preview, setPreview] = useState<{ text: string; background_url: string }[]>([]);
-  const [filename, setFilename] = useState('');
+  const [preview, setPreview] = usePersistedState<{ text: string; background_url: string }[]>(
+    'youtube.preview',
+    [],
+  );
+  const [filename, setFilename] = usePersistedState('youtube.filename', '');
   const [generating, setGenerating] = useState(false);
   const { sessionId, usage, refreshUsage } = useUsageTracker();
 
@@ -108,6 +123,28 @@ export default function YouTubePage() {
     setTimeout(() => setProgress(0), 500);
   };
 
+  const handleClearCurrentContent = () => {
+    if (progressTimer.current) {
+      window.clearInterval(progressTimer.current);
+      progressTimer.current = null;
+    }
+    setUrl('');
+    setTitle('');
+    setComposer('');
+    setLyrics('');
+    setSubtitleType('');
+    setSlides([]);
+    setFrames([]);
+    setWorkDir('');
+    setSelectedFrameIndices(new Set());
+    setPreview([]);
+    setFilename('');
+    setSelectedBgIds([]);
+    setProgress(0);
+    setProgressStep('');
+    setError('');
+  };
+
   const handleExtract = async () => {
     if (!url.trim()) return;
     setLoading(true);
@@ -134,8 +171,8 @@ export default function YouTubePage() {
         setWorkDir(result.work_dir);
         setSelectedFrameIndices(new Set(result.frames.map((_, i) => i)));
       }
-    } catch (err: any) {
-      const msg = err.response?.data?.detail || 'Failed to extract from YouTube';
+    } catch (err: unknown) {
+      const msg = getApiErrorDetail(err) || 'Failed to extract from YouTube';
       setError(msg);
     } finally {
       stopProgress();
@@ -234,8 +271,12 @@ export default function YouTubePage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="flex items-start justify-between gap-4">
         <h2 className="text-lg font-semibold text-white">{t.title}</h2>
+        <ClearCurrentButton
+          onClick={handleClearCurrentContent}
+          disabled={loading || generating}
+        />
       </div>
       <div className="space-y-4">
         <div>

@@ -33,4 +33,13 @@ export default defineConfig({
       '/static': 'http://localhost:8000',
     },
   },
+  preview: {
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: true,
+    proxy: {
+      '/api': 'http://localhost:8000',
+      '/static': 'http://localhost:8000',
+    },
+  },
 })

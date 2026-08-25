@@ -64,6 +64,9 @@ export const chunkSchema = z.object({
 
 export const worshipVideoSchema = z.object({
   title: z.string(),
+  titleEn: z.string().optional(),
+  collectionZh: z.string().optional(),
+  collectionEn: z.string().optional(),
   composer: z.string(),
   language: z.string(),
   audioSrc: z.string(),
@@ -72,13 +75,19 @@ export const worshipVideoSchema = z.object({
   chunks: z.array(chunkSchema),
   titleBackgroundSrc: z.string().nullable(),
   karaokeMode: z.boolean().optional(),
-  // Font sizes are expressed in PPT points (1080p canvas uses px = pt * 2
-  // since the PPT reference slide is 540pt tall). null / undefined = use
-  // the per-language defaults (80px zh / 72px en for content slides).
+  // Font sizes are expressed in PPT points (1080p canvas uses px = pt * 2).
+  // For lyric slides, primary controls Chinese lines and secondary controls
+  // English lines. null / undefined uses 40pt Chinese / 32pt English.
   primaryFontSizePt: z.number().nullable().optional(),
   secondaryFontSizePt: z.number().nullable().optional(),
+  primaryLineSpacingMultiplier: z.number().nullable().optional(),
+  secondaryLineSpacingMultiplier: z.number().nullable().optional(),
+  // Legacy shared value retained for saved render props.
   lineSpacingMultiplier: z.number().nullable().optional(),
   showPageNumbers: z.boolean().optional(),
+  backgroundMotion: z.boolean().optional(),
+  showEndSlide: z.boolean().optional(),
+  endSlideDurationSec: z.number().optional(),
   // 'dark' = black semi-transparent overlay + white text (default);
   // 'light' = white semi-transparent overlay + black text.
   paddingStyle: z.enum(["dark", "light"]).optional(),
@@ -89,10 +98,27 @@ export type KaraokeUnit = z.infer<typeof unitSchema>;
 export type PaddingStyle = "dark" | "light";
 
 const KARAOKE_RAMP_SEC = 0.15;
+const SLIDE_FADE_SEC = 0.8;
+export const END_SLIDE_DURATION_SEC = 3;
 
 const hasChinese = (s: string) => /[\u4e00-\u9fff]/.test(s);
 
-const titleFontSize = (textLen: number): number => {
+const formatTitleText = (text: string): string => {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.includes("\n")) return trimmed;
+  const bilingual = trimmed.match(
+    /^(.+?[\u3400-\u9fff][^A-Za-z]*?)\s+([A-Za-z].*)$/,
+  );
+  return bilingual
+    ? `${bilingual[1].trim()}\n${bilingual[2].trim()}`
+    : trimmed;
+};
+
+const titleFontSize = (text: string): number => {
+  const textLen = Math.max(
+    0,
+    ...text.split("\n").map((line) => Array.from(line).length),
+  );
   if (textLen <= 4) return 192;
   if (textLen <= 8) return 168;
   if (textLen <= 12) return 144;
@@ -106,17 +132,24 @@ type SlideProps = {
   sheetImageSrc?: string | null;
   language: string;
   isTitle?: boolean;
+  instantDisplay?: boolean;
+  titleEn?: string;
+  collectionZh?: string;
+  collectionEn?: string;
   secondary?: string;
   units?: KaraokeUnit[];
   sequenceStartSec?: number;
   primaryFontSizePt?: number | null;
   secondaryFontSizePt?: number | null;
+  primaryLineSpacingMultiplier?: number | null;
+  secondaryLineSpacingMultiplier?: number | null;
   lineSpacingMultiplier?: number | null;
   /** 1-based page number to render in the corner. 0 means "don't show". */
   pageNumber?: number;
   /** Total content pages for the "N / total" badge. */
   totalPages?: number;
   paddingStyle?: PaddingStyle;
+  backgroundMotion?: boolean;
 };
 
 // PPT-reference slide is 540pt tall; our Remotion canvas is 1080px tall.
@@ -173,38 +206,63 @@ const KaraokeBlock: React.FC<{
   units: KaraokeUnit[];
   absTimeSec: number;
   paddingStyle: PaddingStyle;
-}> = ({ units, absTimeSec, paddingStyle }) => {
+  chineseSize: number;
+  englishSize: number;
+  chineseLineHeight: number;
+  englishLineHeight: number;
+}> = ({
+  units,
+  absTimeSec,
+  paddingStyle,
+  chineseSize,
+  englishSize,
+  chineseLineHeight,
+  englishLineHeight,
+}) => {
   const { karaokeUnsung: unsung, karaokeSung: sung } = PADDING_PALETTE[paddingStyle];
   const lines = groupUnitsByLine(units);
   return (
     <>
-      {lines.map((lineUnits, i) => (
-        <div key={i}>
-          {lineUnits.length === 0 ? (
-            <>&nbsp;</>
-          ) : (
-            lineUnits.map((u, j) => {
-              if (u.startSec == null) {
+      {lines.map((lineUnits, i) => {
+        const lineText = lineUnits.map((unit) => unit.text).join("");
+        const chinese = hasChinese(lineText);
+        return (
+          <div
+            key={i}
+            style={{
+              fontSize: chinese ? chineseSize : englishSize,
+              fontFamily: chinese
+                ? `${CJK_FONT_STACK}, ${interFamily}`
+                : `${interFamily}, ${CJK_FONT_STACK}`,
+              lineHeight: chinese ? chineseLineHeight : englishLineHeight,
+            }}
+          >
+            {lineUnits.length === 0 ? (
+              <>&nbsp;</>
+            ) : (
+              lineUnits.map((u, j) => {
+                if (u.startSec == null) {
+                  return (
+                    <span key={j} style={{ color: unsung }}>
+                      {u.text}
+                    </span>
+                  );
+                }
+                const color = interpolateColors(
+                  absTimeSec,
+                  [u.startSec, u.startSec + KARAOKE_RAMP_SEC],
+                  [unsung, sung],
+                );
                 return (
-                  <span key={j} style={{ color: unsung }}>
+                  <span key={j} style={{ color }}>
                     {u.text}
                   </span>
                 );
-              }
-              const color = interpolateColors(
-                absTimeSec,
-                [u.startSec, u.startSec + KARAOKE_RAMP_SEC],
-                [unsung, sung],
-              );
-              return (
-                <span key={j} style={{ color }}>
-                  {u.text}
-                </span>
-              );
-            })
-          )}
-        </div>
-      ))}
+              })
+            )}
+          </div>
+        );
+      })}
     </>
   );
 };
@@ -215,15 +273,22 @@ const Slide: React.FC<SlideProps> = ({
   sheetImageSrc = null,
   language,
   isTitle = false,
+  instantDisplay = false,
+  titleEn = "",
+  collectionZh = "",
+  collectionEn = "",
   secondary = "",
   units,
   sequenceStartSec = 0,
   primaryFontSizePt,
   secondaryFontSizePt,
+  primaryLineSpacingMultiplier,
+  secondaryLineSpacingMultiplier,
   lineSpacingMultiplier,
   pageNumber = 0,
   totalPages = 0,
   paddingStyle = "dark",
+  backgroundMotion = false,
 }) => {
   const {
     overlayBg,
@@ -236,10 +301,10 @@ const Slide: React.FC<SlideProps> = ({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const fadeFrames = Math.max(1, Math.round(fps * 0.4));
+  const fadeFrames = Math.max(1, Math.round(fps * SLIDE_FADE_SEC));
   // Skip fade-in for the title slide so frame 0 of the MP4 (and its auto
   // poster/thumbnail) isn't a black frame from the opacity ramp.
-  const opacity = isTitle
+  const opacity = instantDisplay
     ? 1
     : interpolate(frame, [0, fadeFrames], [0, 1], {
         easing: Easing.out(Easing.cubic),
@@ -247,24 +312,32 @@ const Slide: React.FC<SlideProps> = ({
         extrapolateRight: "clamp",
       });
 
-  const isZh = language.startsWith("zh") || hasChinese(text);
+  const formattedTitle = isTitle ? formatTitleText(text) : text;
+  const legacyTitleLines = formattedTitle.split("\n");
+  const titlePrimary = isTitle ? (legacyTitleLines[0] ?? "") : text;
+  const titleEnglish = isTitle
+    ? titleEn.trim() || legacyTitleLines.slice(1).join(" ").trim()
+    : "";
+  const displayText = isTitle ? titlePrimary : text;
+  const isZh = language.startsWith("zh") || hasChinese(displayText);
   const fontFamilyStack = isZh
     ? `${CJK_FONT_STACK}, ${interFamily}`
     : `${interFamily}, ${CJK_FONT_STACK}`;
 
   const primarySize = isTitle
-    ? titleFontSize(text.length)
+    ? titleFontSize(displayText)
     : primaryFontSizePt != null
       ? Math.round(primaryFontSizePt * PT_TO_PX)
-      : isZh
-        ? 80
-        : 72;
-  const secondarySize = secondaryFontSizePt != null
+      : 80;
+  const englishSize = secondaryFontSizePt != null
     ? Math.round(secondaryFontSizePt * PT_TO_PX)
-    : Math.round(primarySize * 0.42);
-  const primaryLineHeight = lineSpacingMultiplier ?? (isZh ? 1.5 : 1.3);
+    : 64;
+  const titleEnglishSize = Math.max(56, Math.min(88, Math.round(primarySize * 0.48)));
+  const chineseLineHeight = primaryLineSpacingMultiplier ?? lineSpacingMultiplier ?? 1.5;
+  const englishLineHeight = secondaryLineSpacingMultiplier ?? lineSpacingMultiplier ?? 1.3;
+  const titleLineHeight = isZh ? chineseLineHeight : englishLineHeight;
 
-  const lines = text.split("\n");
+  const lines = displayText.split("\n");
   const useKaraoke = !isTitle && Array.isArray(units) && units.length > 0;
   const absTimeSec = sequenceStartSec + frame / fps;
 
@@ -277,14 +350,37 @@ const Slide: React.FC<SlideProps> = ({
     height: "100%",
     objectFit: "cover",
   };
+  const motionStyle: React.CSSProperties =
+    backgroundMotion && !bgIsVideo
+      ? {
+          transform: `scale(${interpolate(
+            frame,
+            [0, fps * 20],
+            [1, 1.035],
+            {
+              extrapolateLeft: "clamp",
+              extrapolateRight: "clamp",
+            },
+          )})`,
+          transformOrigin: "center center",
+        }
+      : {};
 
   return (
     <AbsoluteFill style={{ opacity }}>
       {backgroundSrc ? (
         bgIsVideo ? (
-          <Video src={resolveAssetUrl(backgroundSrc)} loop muted style={coverStyle} />
+          <Video
+            src={resolveAssetUrl(backgroundSrc)}
+            loop
+            muted
+            style={coverStyle}
+          />
         ) : (
-          <Img src={resolveAssetUrl(backgroundSrc)} style={coverStyle} />
+          <Img
+            src={resolveAssetUrl(backgroundSrc)}
+            style={{ ...coverStyle, ...motionStyle }}
+          />
         )
       ) : (
         <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }} />
@@ -334,33 +430,105 @@ const Slide: React.FC<SlideProps> = ({
           style={{
             color: primaryTextColor,
             fontFamily: fontFamilyStack,
-            fontSize: primarySize,
+            fontSize: isTitle ? primarySize : undefined,
             fontWeight: 700,
-            lineHeight: primaryLineHeight,
+            lineHeight: isTitle ? titleLineHeight : undefined,
             textShadow,
             whiteSpace: "pre-wrap",
             wordBreak: isZh ? "normal" : "break-word",
           }}
         >
-          {useKaraoke ? (
-            <KaraokeBlock units={units!} absTimeSec={absTimeSec} paddingStyle={paddingStyle} />
-          ) : (
-            lines.map((line, i) => (
-              <div key={i}>{line === "" ? "\u00A0" : line}</div>
-            ))
-          )}
-          {isTitle && secondary ? (
-            <div
-              style={{
-                fontSize: secondarySize,
-                color: secondaryTextColor,
-                marginTop: 40,
-                fontWeight: 400,
-              }}
-            >
-              {secondary}
+          {isTitle ? (
+            <div style={{ width: "100%", textAlign: "center" }}>
+              <div
+                style={{
+                  fontFamily: `${CJK_FONT_STACK}, ${interFamily}`,
+                  fontSize: primarySize,
+                  lineHeight: 1.15,
+                }}
+              >
+                {titlePrimary}
+              </div>
+              {titleEnglish ? (
+                <div
+                  style={{
+                    marginTop: 24,
+                    fontFamily: `${interFamily}, ${CJK_FONT_STACK}`,
+                    fontSize: titleEnglishSize,
+                    lineHeight: 1.15,
+                  }}
+                >
+                  {titleEnglish}
+                </div>
+              ) : null}
+              {collectionZh.trim() || collectionEn.trim() ? (
+                <div style={{ marginTop: 86 }}>
+                  {collectionZh.trim() ? (
+                    <div
+                      style={{
+                        fontFamily: `${CJK_FONT_STACK}, ${interFamily}`,
+                        fontSize: 54,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {collectionZh.trim()}
+                    </div>
+                  ) : null}
+                  {collectionEn.trim() ? (
+                    <div
+                      style={{
+                        marginTop: 16,
+                        fontFamily: `${interFamily}, ${CJK_FONT_STACK}`,
+                        fontSize: 44,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {collectionEn.trim()}
+                    </div>
+                  ) : null}
+                </div>
+              ) : secondary.trim() ? (
+                <div
+                  style={{
+                    marginTop: 70,
+                    color: secondaryTextColor,
+                    fontSize: 48,
+                    fontWeight: 400,
+                  }}
+                >
+                  {secondary.trim()}
+                </div>
+              ) : null}
             </div>
-          ) : null}
+          ) : useKaraoke ? (
+            <KaraokeBlock
+              units={units!}
+              absTimeSec={absTimeSec}
+              paddingStyle={paddingStyle}
+              chineseSize={primarySize}
+              englishSize={englishSize}
+              chineseLineHeight={chineseLineHeight}
+              englishLineHeight={englishLineHeight}
+            />
+          ) : (
+            lines.map((line, i) => {
+              const chinese = hasChinese(line);
+              return (
+                <div
+                  key={i}
+                  style={isTitle ? undefined : {
+                    fontSize: chinese ? primarySize : englishSize,
+                    fontFamily: chinese
+                      ? `${CJK_FONT_STACK}, ${interFamily}`
+                      : `${interFamily}, ${CJK_FONT_STACK}`,
+                    lineHeight: chinese ? chineseLineHeight : englishLineHeight,
+                  }}
+                >
+                  {line === "" ? "\u00A0" : line}
+                </div>
+              );
+            })
+          )}
         </div>
       </AbsoluteFill>
 
@@ -389,45 +557,70 @@ const Slide: React.FC<SlideProps> = ({
 
 export const WorshipVideo: React.FC<WorshipVideoProps> = ({
   title,
+  titleEn = "",
+  collectionZh = "",
+  collectionEn = "",
   composer,
   language,
   audioSrc,
+  audioDurationSec,
   introDurationSec,
   chunks,
   titleBackgroundSrc,
   karaokeMode = false,
   primaryFontSizePt,
   secondaryFontSizePt,
+  primaryLineSpacingMultiplier,
+  secondaryLineSpacingMultiplier,
   lineSpacingMultiplier,
   showPageNumbers = false,
   paddingStyle = "dark",
+  backgroundMotion = false,
+  showEndSlide = false,
+  endSlideDurationSec = END_SLIDE_DURATION_SEC,
 }) => {
   const { fps } = useVideoConfig();
-  const fadeFrames = Math.max(1, Math.round(fps * 0.4));
+  const fadeFrames = Math.max(1, Math.round(fps * SLIDE_FADE_SEC));
 
   const introFrames = Math.max(1, Math.round(introDurationSec * fps));
+  const audioFrames = Math.max(1, Math.round(audioDurationSec * fps));
+  const endFrames = Math.max(1, Math.round(endSlideDurationSec * fps));
+  const endFrom = Math.max(0, audioFrames - fadeFrames);
+  const endBackgroundSrc = chunks.length > 0
+    ? chunks[chunks.length - 1].backgroundSrc
+    : titleBackgroundSrc;
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000000" }}>
-      <Audio src={resolveAssetUrl(audioSrc)} />
+      <Audio
+        src={resolveAssetUrl(audioSrc)}
+        pauseWhenBuffering
+      />
 
       {/* Title slide */}
-      <Sequence from={0} durationInFrames={introFrames} premountFor={fps}>
+      <Sequence durationInFrames={introFrames} premountFor={fps}>
         <Slide
           text={title}
           backgroundSrc={titleBackgroundSrc}
           language={language}
           isTitle
+          instantDisplay
+          titleEn={titleEn}
+          collectionZh={collectionZh}
+          collectionEn={collectionEn}
           secondary={composer}
           primaryFontSizePt={primaryFontSizePt}
           secondaryFontSizePt={secondaryFontSizePt}
+          primaryLineSpacingMultiplier={primaryLineSpacingMultiplier}
+          secondaryLineSpacingMultiplier={secondaryLineSpacingMultiplier}
           lineSpacingMultiplier={lineSpacingMultiplier}
           paddingStyle={paddingStyle}
+          backgroundMotion={backgroundMotion}
         />
       </Sequence>
 
-      {/* Content slides — each starts `fadeFrames` early so its fade-in
-          overlaps the end of the previous slide for a smooth crossfade. */}
+      {/* Content slides start early so chunk.startSec remains the exact frame
+          where the incoming page has finished fading to full opacity. */}
       {chunks.map((chunk, i) => {
         const nativeFrom = Math.round(chunk.startSec * fps);
         const overlappedFrom = Math.max(0, nativeFrom - fadeFrames);
@@ -450,14 +643,43 @@ export const WorshipVideo: React.FC<WorshipVideoProps> = ({
               sequenceStartSec={overlappedFrom / fps}
               primaryFontSizePt={primaryFontSizePt}
               secondaryFontSizePt={secondaryFontSizePt}
+              primaryLineSpacingMultiplier={primaryLineSpacingMultiplier}
+              secondaryLineSpacingMultiplier={secondaryLineSpacingMultiplier}
               lineSpacingMultiplier={lineSpacingMultiplier}
               pageNumber={showPageNumbers ? i + 1 : 0}
               totalPages={showPageNumbers ? chunks.length : 0}
               paddingStyle={paddingStyle}
+              backgroundMotion={backgroundMotion}
             />
           </Sequence>
         );
       })}
+
+      {showEndSlide && (
+        <Sequence
+          from={endFrom}
+          durationInFrames={endFrames + (audioFrames - endFrom)}
+          premountFor={fps}
+        >
+          <Slide
+            text={title}
+            backgroundSrc={endBackgroundSrc}
+            language={language}
+            isTitle
+            titleEn={titleEn}
+            collectionZh={collectionZh}
+            collectionEn={collectionEn}
+            secondary={composer}
+            primaryFontSizePt={primaryFontSizePt}
+            secondaryFontSizePt={secondaryFontSizePt}
+            primaryLineSpacingMultiplier={primaryLineSpacingMultiplier}
+            secondaryLineSpacingMultiplier={secondaryLineSpacingMultiplier}
+            lineSpacingMultiplier={lineSpacingMultiplier}
+            paddingStyle={paddingStyle}
+            backgroundMotion={backgroundMotion}
+          />
+        </Sequence>
+      )}
     </AbsoluteFill>
   );
 };

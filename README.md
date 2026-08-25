@@ -1,376 +1,398 @@
 # Morning Star Praise / 晨星赞美
 
-Automated workflow that turns lyrics, sheet music, and web resources into multilingual worship slides and videos.
+Morning Star Praise is a local-first workflow for turning confirmed lyrics,
+Word documents, sheet music, audio, and web sources into editable worship
+slides and synchronized lyric videos.
 
-一键把歌词、乐谱、网络资源转化为多语种敬拜 PPT 与同步视频的工作流平台。
+晨星赞美是一套本地优先的敬拜制作工作流，可将已确认歌词、Word 文档、乐谱、音频和
+网络素材整理为可编辑的敬拜 PPT 与同步歌词视频。
 
----
+## Who it's for / 适用对象
 
-## Who it's for
+This project is for worship teams and church media volunteers who regularly
+prepare multilingual lyrics, slides, or videos and want a repeatable workflow
+without giving up editorial control.
 
-Worship teams and church media volunteers who currently spend hours every week hand-building slide decks before each service. If any of these sound familiar, this project is for you:
+本项目适合需要长期制作多语种歌词、幻灯片或视频的敬拜团队和教会媒体同工。系统负责
+提取、分段、排版和时间对齐，最终歌词、结构、背景及时间点仍由使用者确认。
 
-- **"I have lyrics in a text file / Word doc — I just want a PPT with our backgrounds and fonts."** Paste the lyrics, pick backgrounds, download a finished `.pptx`.
-- **"Someone sent me a YouTube link of the song we want to sing — now I have to transcribe it."** Paste the URL; the app pulls captions (or runs OCR on frames if there are none) and produces the slides.
-- **"We have a printed sheet-music score and want each slide to show the music + lyrics."** Upload the sheet image or PDF; the app auto-segments staff systems, crops per-slide fragments, and pairs each fragment with a lyrics box.
-- **"We have an MP3 of the song and want a karaoke / worship video to project."** Upload the MP3 + lyrics; the app aligns lyrics to the audio (handles repeated choruses) and renders an MP4 with slides that change exactly when each line is sung — including per-character karaoke highlight.
-- **"Our songs are bilingual (Chinese + English) and translating + formatting them is painful."** Translation runs through your chosen LLM; both languages render side-by-side on the same slide.
-- **"We can't / won't send our church's data to a cloud LLM."** Run in pure-local mode — `faster-whisper` for audio + Ollama for OCR / translation, fully offline.
+- Import a bilingual `.docx`, review every Verse and Chorus, then send the
+  result directly to Slides or Video.
+- Paste lyrics or extract them from YouTube, PowerPoint, images, or PDFs and
+  generate an editable 16:9 `.pptx`.
+- Upload sheet music and place detected score sections above editable lyrics.
+- Upload an audio performance, calibrate every sung cue, then render a 1080p
+  MP4 and SRT without replacing the supplied lyrics with transcription text.
+- Run speech alignment locally and choose either local Ollama models or cloud
+  providers for OCR and translation.
 
-如果你的敬拜团每周都要花几个小时手动做 PPT 或敬拜视频,这个项目就是为你而做。无论是把歌词文件变 PPT、把 YouTube 视频转成 PPT、把乐谱扫描件做成带歌词的幻灯片,还是把一段 MP3 + 歌词渲染成 slide 与人声同步切换的视频,都可以一键完成。完全支持纯本地模式(无需任何 API key),也支持中英双语自动翻译排版。
+- 导入中英双语 `.docx`，逐节校对 Verse 与副歌，再直接发送到幻灯片或视频页面。
+- 粘贴歌词，或从 YouTube、PowerPoint、图片及 PDF 提取内容，生成可编辑的 16:9 PPTX。
+- 上传乐谱，在每张歌词页上方放置自动识别的乐谱片段。
+- 上传实际演唱音频，逐页校准开唱时间，再生成 1080p MP4 与 SRT；转写文字不会覆盖
+  用户提供的歌词。
+- 音频对齐可完全在本地运行；OCR 与翻译可选择 Ollama 或云端模型。
 
----
+## Core workflows / 核心工作流
 
-## Features
-
-- **Lyric → PPT** — Paste text, a YouTube URL, a `.pptx`, a PDF, or an image; get a finished `.pptx` with your background pool, fonts, and optional bilingual translation.
-- **Sheet-music → PPT** (Phase 1) — Optionally upload a printed sheet-music image or PDF on the Lyrics page; `oemer` detects staff systems, the app crops the original scan into per-slide fragments, and each slide shows the sheet fragment on top with a draggable lyrics textbox below (white backdrop). No re-rendering — the pixels are always your upload. Handwritten sheets may misdetect.
-- **Worship video** — Upload MP3 + lyrics; render an MP4 whose slide transitions lock to the moment each line is sung. Repeated verses/choruses expand automatically when the audio order differs from the written lyrics.
-- **Karaoke mode** — Per-character (CJK) or per-word (Latin) highlight that lights up with the vocal.
-- **Edit video** — After a render, open the MP4 in an embedded `@remotion/player`, nudge slide timings / swap backgrounds, and re-render from the cached plan without re-transcribing.
-- **Songs Library** — Every PPT and video render is saved with a resumable snapshot. Return later to re-download or restore the form state and keep editing.
-- **Settings page** — One place to edit the default template (max lines, font sizes, line spacing, page numbers) and pick which LLM powers OCR / translation / YouTube-frame analysis. Toggle between *API mode* (cloud providers) and *Local mode* (Ollama) without restarting the backend.
-- **Background library** — 84 bundled backgrounds (gradients, radial glows, landscape motion loops) plus user uploads, with a tag-filterable picker and lazy-paused autoplay so 30+ video tiles don't saturate the decoder.
-- **OCR + lyric extraction** — Vision LLM first (qwen3-vl / Gemini / GPT-4o — beats PaddleOCR on sheet music because it filters out chord symbols and notation), PaddleOCR as fallback. `python-pptx` walker for decks; `youtube-transcript-api` + `yt-dlp` for YouTube captions.
-- **Multi-language UI** — Chinese default with English toggle; Terms / Privacy pages ship bilingual.
-
----
-
-## Two operating modes
-
-You choose how much LLM capacity to wire up. Both modes use the same codebase — change `.env` and features light up or gracefully degrade.
-
-### Pure-local mode (no API keys)
-
-Set `LLM_TEXT_PROVIDER=""` and `LLM_VISION_PROVIDER=""`. Everything that doesn't need an LLM keeps working. What you lose:
-
-| Feature | Pure-local | LLM-powered |
+| Workflow | What it does | 主要能力 |
 |---|---|---|
-| Lyric → PPT (text paste, already-extracted lyrics) | ✅ | ✅ |
-| Worship video (MP3 + lyrics paste) | ✅ (`faster-whisper` + `wav2vec2` run on your machine) | ✅ |
-| Karaoke highlight | ✅ | ✅ |
-| Songs Library / Settings / Edit Video | ✅ | ✅ |
-| Background library + uploads | ✅ | ✅ |
-| YouTube caption extraction (CC tracks) | ✅ (via `youtube-transcript-api`) | ✅ |
-| **OCR of sheet-music images / PDFs** | ⚠️ PaddleOCR only (no LLM to filter out chord symbols / notation) | ✅ Vision LLM first, PaddleOCR fallback — cleanly separates lyrics from notation |
-| **Translation** (e.g. English lyrics → Chinese) | ❌ | ✅ |
-| **YouTube frame-based lyric extraction** (when no captions exist) | ❌ | ✅ |
-| **Gemini 16:9 outpainting** for non-16:9 backgrounds | ⚠️ falls back to blurred edge fill | ✅ (Gemini only) |
+| Word Lyrics | Deterministically imports bilingual `.docx` files, shows parse confidence and source coverage, requires review for unresolved text, and exports a normalized `_v2.docx`. | 确定性解析双语 `.docx`，显示置信度与原文覆盖率；未归类文字必须人工处理，并可导出规范化 `_v2.docx`。 |
+| Slides | Creates editable PPTX files with separate title metadata, bilingual lyrics, page numbers, reusable backgrounds, and optional score images. | 生成可编辑 PPTX，支持独立标题元数据、双语歌词、页码、背景与乐谱图片。 |
+| Sheet Music | Supports clean notation rebuild, deterministic source cropping, and vision-model crop detection. | 支持重新扒谱排版、本地截图识别及视觉模型截图识别。 |
+| Worship Video | Analyzes audio, expands the actual sung stanza order, previews timing, supports per-slide calibration and backgrounds, then renders MP4 + SRT. | 分析音频并展开实际演唱顺序，预览及逐页校准时间与背景，再生成 MP4 + SRT。 |
+| Local Drafts | Preserves form values, selected files, analysis plans, timing edits, and generated results while navigating; explicit Clear actions remove the current draft. | 页面切换时保留表单、文件、分析、时间调整与成品；仅在用户点击清除时删除当前草稿。 |
+| Songs Library | Stores generated PPT/video records and resumable snapshots when PostgreSQL is available. | PostgreSQL 可用时保存 PPT/视频记录及可恢复快照。 |
 
-Pure-local mode is zero-cost and fully offline once dependencies are installed.
+### Confirmed lyrics stay authoritative / 以确认歌词为准
 
-### LLM-powered mode
+Audio transcription is used only to locate where supplied lyrics are sung.
+The text shown in slides, video frames, and subtitles comes from the user's
+reviewed lyrics. This avoids silently publishing Whisper hallucinations or
+formatting changes as final worship text.
 
-Pick one provider for text and one for vision (they can differ). Supported:
+音频转写只用于定位已提供歌词的演唱时间。幻灯片、视频画面和字幕中的文字来自用户校对后
+的歌词，系统不会把 Whisper 幻觉或自动改写静默当成最终敬拜歌词。
 
-| Provider key | Text models | Vision models | API endpoint |
-|---|---|---|---|
-| `openai` | `gpt-4o-mini` (default) / `gpt-4o` / ... | `gpt-4o` (default) | api.openai.com |
-| `anthropic` | `claude-haiku-4-5-20251001` (default) / `claude-sonnet-4-6` | `claude-sonnet-4-6` (default) | api.anthropic.com |
-| `gemini` | `gemini-2.5-flash` (default) | `gemini-2.5-flash` (default) | generativelanguage.googleapis.com |
-| `minimax` | `abab6.5s-chat` (default) | `abab6.5s-chat` | api.minimax.chat |
-| `qwen` | `qwen-plus` (default) | `qwen-vl-plus` (default) | DashScope (Alibaba) |
-| `glm` | `glm-4-flash` (default) | `glm-4v-flash` (default) | open.bigmodel.cn (Zhipu) |
-| `ollama` | `gemma4:e4b` (default) / `qwen3.5:9b` | `qwen3-vl:8b` (default) / `qwen2.5vl:7b` / `llava` | your local Ollama (`http://localhost:11434/v1`) |
+## Word Lyrics workflow / Word 歌词工作流
 
-OpenAI, MiniMax, Qwen, GLM, and Ollama all use OpenAI-compatible endpoints under the hood and share one code path. Anthropic and Gemini use their native SDKs. See `backend/app/services/llm_service.py` for the dispatch logic.
+The **Lyrics** page accepts one `.docx` file up to 10 MB and parses it locally.
+It understands common bilingual hymn layouts, including:
 
-Only the provider(s) you select need their SDK installed and key configured:
+- Chinese and English language blocks;
+- stanza-interleaved and line-interleaved lyrics;
+- two-column and stanza tables;
+- Word automatic numbering, soft/page breaks, hyperlinks, tracked insertions,
+  and text boxes;
+- labeled or unlabeled verses, multi-digit verse numbers, repeated or
+  referenced refrains, and a final `Amen` ending.
 
-- `openai` / `minimax` / `qwen` / `glm` / `ollama` → requires `openai` Python package (in `requirements.txt`)
-- `anthropic` → requires `anthropic` package (in `requirements.txt`)
-- `gemini` → requires `google-genai` package (in `requirements.txt`)
+Each import reports the selected layout, alternative candidates, confidence,
+classified fragment count, and any unresolved source text. A low-confidence or
+incomplete result must be reviewed before it can be copied, exported, or sent
+to another workflow. Refrains are expanded after each Verse, while `Amen` is
+emitted once at the end.
 
-### Switching providers at runtime (Settings page)
+**歌词**页面接收一个不超过 10 MB 的 `.docx` 并在本地解析，支持中英文整块、逐节中英、
+逐行中英、表格双栏、Word 自动编号、软换行/分页、超链接、修订插入、文本框、无标签
+Verse、多位数节号、副歌引用及结尾 Amen。页面会显示候选版式、置信度、已归类原文数量
+和未归类片段；低置信度或不完整结果必须人工确认后才能复制、导出或发送。副歌会在每节
+Verse 后展开，Amen 只在最后输出一次。
 
-You don't have to pick one provider in `.env` and live with it. The **Settings** page in the UI exposes a three-way toggle:
+## Slides and sheet music / 幻灯片与乐谱
 
-- **Follow server default** — use whatever `.env` has (no override, empty headers)
-- **API mode** — pick a cloud provider for text and for vision (they can differ)
-- **Local mode** — route both modalities to your local Ollama
+Generated presentations use a 16:9 layout and editable text boxes. Chinese and
+English titles, collection names, and composer metadata remain separate, so
+they can be repositioned in PowerPoint. Primary and secondary lyrics can use
+independent font sizes and line spacing.
 
-The selection is persisted in the browser's `localStorage` and travels to the backend on each request via `X-LLM-Text-Provider`, `X-LLM-Text-Model`, `X-LLM-Vision-Provider`, `X-LLM-Vision-Model` headers. A per-request `contextvars` scope in `llm_service.py` reads those headers and overrides the env defaults for that request only, so two browser tabs can use different providers simultaneously.
+Three sheet modes are available on the Sheet Music page and in the Video
+workflow:
 
-**API keys never leave the backend.** Only provider *names* and model *names* travel over the wire. Keys stay in `backend/.env` (or Google Secret Manager in production). If you switch to a provider whose key isn't configured yet, the Settings page shows an amber hint with the env var name, where to get the key, and a reminder to restart the backend.
+| Mode | Pipeline | Best for |
+|---|---|---|
+| Rebuild / 扒谱 | `homr` -> MusicXML -> Verovio -> clean render | Printed music that benefits from clean notation |
+| Crop / 截图 | Local staff-line detection -> crop source pixels | Preserving the exact scan, including printed lyrics |
+| AI Crop / 截图 (AI) | Active vision model -> tight score regions | Complex layouts where local detection is insufficient |
 
-`GET /api/llm/status` returns the full per-provider readiness + active selection so the UI can display "ready" / "API key missing" pills.
+`rebuild` falls back to source cropping when OMR or Verovio is unavailable.
+PDF uploads require Poppler. The optional `homr` installation must use Python
+3.11; `oemer` is installed through `backend/requirements.txt` as the local
+staff-detection fallback.
 
----
+生成的演示文稿采用 16:9 比例和可编辑文本框。中英文歌名、诗集名称及作者信息分别保存，
+便于在 PowerPoint 中继续调整；中英文歌词可分别设置字号和行距。`rebuild` 失败时会自动
+退回原图裁切。PDF 需要 Poppler，可选的 `homr` 环境使用 Python 3.11，`oemer` 则由后端
+依赖安装。
+
+## Worship video timing / 敬拜视频时间校准
+
+The video flow is deliberately split into three stages:
+
+1. **Analyze** — transcribe timing locally with `faster-whisper`, match the
+   supplied stanzas to the performance, expand repeats, and cache the plan.
+2. **Calibrate** — preview the shared Remotion composition, edit the sung start
+   of each slide, set a cue from the current playhead, and override title or
+   lyric backgrounds.
+3. **Render / re-render** — create MP4 and SRT from the cached plan without
+   transcribing the audio again.
+
+Display timing and sung timing are stored separately. By default, a lyric slide
+is fully visible 0.5 seconds before singing starts. After an instrumental gap
+longer than eight seconds, the next slide appears five seconds early. SRT and
+karaoke timing continue to use the actual sung range. User edits are clamped to
+the audio duration and display starts stay monotonic.
+
+视频流程分为“分析 → 校准 → 渲染/重新渲染”。系统缓存分析计划，重新生成时不会再次转写。
+画面时间与实际演唱时间分别保存：普通页面默认提前 0.5 秒完整出现，超过 8 秒的间奏后提前
+5 秒显示下一页；SRT 与卡拉 OK 高亮仍使用实际演唱时间。人工时间点会限制在音频长度内，
+画面开始时间也会保持递增。
+
+Additional video controls include:
+
+- per-slide title and lyric background replacement with image/video filtering
+  and search;
+- stable Verse + Chorus background grouping, including repeated choruses and
+  variable slide counts;
+- independent Chinese/English font sizes and line spacing;
+- optional page numbers, static-background motion, sheet overlays, and a
+  three-second end slide;
+- analysis/output retention while a browser draft references them, plus
+  explicit cleanup when the draft is cleared.
+
+## Pages / 页面
+
+- **Lyrics / 歌词** — import, review, normalize, and hand off bilingual Word lyrics.
+- **Slides / 幻灯片** — format text or bilingual lyrics and generate PPTX.
+- **YouTube** — use caption extraction or frame analysis as a lyric source.
+- **Sheet Music / 乐谱** — OCR lyrics and segment notation for slides.
+- **Video / 视频** — analyze audio, calibrate cues, preview, render, and re-render.
+- **Songs / 诗歌库** — reopen saved PPT and video work.
+- **Settings / 设置** — save browser-local layout defaults and select local or
+  cloud text/vision models.
+
+## Processing modes / 处理模式
+
+The core PPT and supplied-lyrics video workflows do not require an API key.
+`faster-whisper` runs audio alignment locally. Features that require text or
+vision inference can use either Ollama or a configured cloud provider.
+
+| Mode | Text and vision | Data path |
+|---|---|---|
+| Local | Ollama models selected in Settings | Requests stay on the machine |
+| API | OpenAI, Anthropic, Gemini, MiniMax, Qwen, or GLM | Relevant OCR/translation input is sent to the selected provider |
+
+Provider and model names are sent to the backend in request headers, but API
+keys remain server-side. The Settings page only enables cloud providers whose
+keys are configured.
+
+PPT 和“已提供歌词”的视频工作流不需要 API key，音频时间由本机 `faster-whisper` 处理。
+OCR、翻译和部分图片分析可选择 Ollama 或已配置的云端模型。浏览器只发送服务商与模型名称，
+API key 始终保留在后端。
 
 ## Stack
 
-| Layer       | Tech |
+| Layer | Technology |
 |---|---|
-| Backend     | FastAPI · `faster-whisper` (large-v3) · `python-pptx` · `yt-dlp` · pluggable LLMs |
-| Frontend    | React 19 · Vite · TypeScript · Tailwind v4 · `@remotion/player` |
-| Composition | Remotion 4.0 (one React composition shared between CLI renderer and in-browser player) |
-| Storage     | Filesystem for analyses + renders · PostgreSQL for Songs Library · browser `localStorage` for Settings (default template + LLM routing) |
+| Backend | FastAPI, Python 3.11, `faster-whisper`, `python-pptx`, `python-docx`, `yt-dlp` |
+| Frontend | React 19, Vite, TypeScript, Tailwind CSS v4 |
+| Video | Remotion 4; one composition shared by CLI rendering, the browser player, and Remotion Studio |
+| Storage | Filesystem drafts and outputs, browser `sessionStorage`/`localStorage`, optional PostgreSQL library |
 
----
+## Setup / 安装
 
-## Project layout
+### Requirements / 环境要求
 
-```
-.
-├── backend/          FastAPI app
-│   ├── app/
-│   │   ├── routers/  HTTP (lyrics, ppt, videos, youtube, ocr, library, templates, …)
-│   │   └── services/ whisper alignment, ppt gen, stanza matching, llm_service, library_service, …
-│   ├── data/
-│   │   └── backgrounds/defaults/   84 bundled background assets (~192 MB)
-│   └── requirements.txt
-├── frontend/         React + Vite UI
-│   └── src/
-│       ├── pages/    LyricsPage · WorshipVideoPage · YouTubePage · OcrPage · SongsLibraryPage · TemplatesPage (rendered as "Settings")
-│       ├── components/
-│       └── hooks/    useLanguage · usePersistedState · usePersistedGlobalState · useTemplateDefaults · useResumeSnapshot · useLLMSettings
-├── remotion/         Shared Remotion composition (WorshipVideo.tsx)
-└── praise.sh         One-shot launcher: kills old servers, ensures Postgres, starts backend + frontend
-```
+- macOS or Linux (Windows through WSL is untested)
+- Python 3.11
+- Node.js 20+
+- `ffmpeg`
+- Chrome or Chromium for Remotion rendering
+- `poppler` for PDF sheet music
+- PostgreSQL 14+ only if the Songs Library is needed
+- Ollama only if local text/vision inference is needed
 
----
+macOS system packages:
 
-## Setup
-
-### 1. System requirements
-
-- **macOS or Linux** (Windows may work via WSL; untested)
-- **Python 3.11+**
-- **Node.js 20+** (for frontend + Remotion)
-- **PostgreSQL 14+** (required for Songs Library; skip if you don't need history)
-- **ffmpeg** (required by `yt-dlp` and audio decode) — `brew install ffmpeg` / `apt-get install ffmpeg`
-- **~4 GB disk** for the first `/api/videos/analyze` run — `faster-whisper large-v3` downloads once into the HuggingFace cache.
-- **poppler** (only if you want to upload PDF sheet music) — `brew install poppler` / `apt-get install poppler-utils`. Used by `pdf2image` to rasterize PDFs before OMR.
-- **homr + Python 3.11 + Poetry** for the sheet-music-on-PPT feature — see Setup § 3.5. First homr run downloads ~300 MB of transformer models into its venv.
-- **~200 MB** extra for `oemer` (fallback OMR) — downloads 4 ONNX/H5 weight files into `site-packages/oemer/checkpoints/` on first use. Prefetch to avoid a request-time stall:
-  ```bash
-  cd backend && source .venv/bin/activate
-  python -c "from app.services.sheet_music_service import _ensure_oemer_weights; _ensure_oemer_weights()"
-  ```
-
-### 2. PostgreSQL
-
-#### macOS (Homebrew)
 ```bash
-brew install postgresql@18
+brew install ffmpeg poppler postgresql@18
 brew services start postgresql@18
 createdb ppt_maker
 ```
 
-#### Linux (apt)
-```bash
-sudo apt-get install postgresql
-sudo systemctl start postgresql
-sudo -u postgres createdb ppt_maker
-# Option: give your user access with your own role
-sudo -u postgres createuser --superuser "$USER"
-```
+On Linux, install the equivalent `ffmpeg`, `poppler-utils`, and PostgreSQL
+packages with the system package manager.
 
-Tables are created automatically on the first backend boot (`init_tables()` in `backend/app/database.py`). No migrations to run.
-
-If you skip Postgres, the app still starts — Songs Library shows a "database unavailable" banner, but Settings (template defaults + LLM routing) keeps working because it's stored in the browser's `localStorage`.
-
-### 3. Backend
+### Backend / 后端
 
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate
+python3.11 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in DATABASE_URL + optional LLM keys
-
-# Prefetch OMR weights (optional but strongly recommended — otherwise the
-# FIRST sheet-music analysis stalls the request for minutes while downloading
-# 4 files totalling ~200 MB).
-python -c "from app.services.sheet_music_service import _ensure_oemer_weights; _ensure_oemer_weights()"
-
-python run.py          # → http://127.0.0.1:8000
+cp .env.example .env
+python run.py
 ```
 
-### 3.5. homr — default OMR backend for sheet-music feature
+Backend: [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
-The sheet-music-on-PPT feature needs homr for clean grand-staff recognition on printed hymnals. Because homr pins Python 3.11 + Poetry, it runs in its own venv that the backend shells out to.
+The first audio analysis downloads the configured Whisper model. The default
+`medium` + `int8` configuration is intended for a 16 GB laptop; choose a smaller
+model in `.env` when memory is limited.
 
-```bash
-# Python 3.11 (pyenv is the easiest route)
-pyenv install 3.11
-# Poetry (user-level install keeps it out of the backend venv)
-pip install --user poetry
+首次分析音频会下载所选 Whisper 模型。默认 `medium` + `int8` 面向 16 GB 笔记本；内存
+较小时请在 `.env` 中选择更小的模型。
 
-# Vendor + install homr
-mkdir -p third_party && cd third_party
-git clone --depth=1 https://github.com/liebharc/homr.git
-cd homr
-echo "3.11.14" > .python-version   # match whatever 3.11.x you got
-~/.local/bin/poetry env use "$(pyenv prefix 3.11)/bin/python3.11"
-~/.local/bin/poetry install --only main
-```
-
-That's all — the backend auto-discovers `third_party/homr/` and `~/.local/bin/poetry` and shells out per sheet. If either is missing, the sheet pipeline falls back to `oemer` (pip-only, less accurate on grand staves).
-
-The UI exposes two modes:
-
-- **扒谱 (`rebuild`, default)** — **homr → MusicXML → Verovio render → clean PNG crop**. The PPT / video shows re-rendered notation with no scan artefacts or printed lyrics baked in. OMR mistakes (e.g. missed fermatas) become visible in the output.
-- **截图 (`crop`)** — **oemer staff detection → pixel crop from the original scan**. Preserves the source exactly, including watermarks, chord symbols and printed lyrics. Right when pixel fidelity matters more than clean typography.
-
-Both modes are available on the **乐谱** page and inside the **视频** (Worship Video) preview — the user picks per song via a segmented control, and the choice persists across reloads. When `rebuild` fails (homr not installed, Verovio crash, atypical engraving) the pipeline transparently falls back to `crop` so the request still succeeds.
-
-A future Phase 2 enhancement will use homr's MusicXML for note-level audio-to-score alignment inside videos.
-
-### 4. Frontend
+### Frontend and Remotion / 前端与视频渲染
 
 ```bash
 cd frontend
 npm install
-npm run dev            # → http://localhost:5173
+npm run dev
 ```
 
-Vite proxies `/api/*` and `/static/*` to the backend.
-
-### 5. One-command dev loop
-
-From the repo root:
-```bash
-./praise.sh
-```
-
-It kills any existing dev servers on `:8000` and `:5173`, auto-starts Postgres if installed but not running (via `brew services` on macOS or `systemctl` on Linux), then launches backend + frontend and tails both logs. `Ctrl+C` stops everything.
-
-### 6. Remotion Studio (optional)
-
-Only needed if you're iterating on the composition itself (`remotion/src/WorshipVideo.tsx`). The backend shells out to `@remotion/cli` during rendering, so the Studio doesn't need to run for normal use.
+In a second terminal, install the Remotion workspace used by the backend
+renderer:
 
 ```bash
 cd remotion
 npm install
-npm run dev            # http://localhost:3000
 ```
 
----
+Frontend: [http://localhost:5173](http://localhost:5173)
 
-## Environment variables
+### One-command development / 一键开发
 
-Copy `backend/.env.example` → `backend/.env`.
-
-### Core
-
-| Key | Required? | Purpose |
-|---|---|---|
-| `DATABASE_URL` | ✅ for Songs Library | `postgresql://user[:pass]@host:port/dbname` — e.g. `postgresql://user@127.0.0.1:5432/ppt_maker` |
-| `FRONTEND_URL` | — | CORS allowlist (default `http://localhost:5173`) |
-| `GCP_PROJECT_ID` | prod only | Google Secret Manager fallback (Cloud Run deploys read secrets from here) |
-| `PEXELS_API_KEY` | optional | Only used by the background-fetch scripts in `backend/scripts/` |
-
-### LLM routing
-
-These are the **server-side defaults**. The UI Settings page can override them per-request without restarting the backend.
-
-| Key | Values |
-|---|---|
-| `LLM_TEXT_PROVIDER` | `openai` · `anthropic` · `gemini` (default) · `minimax` · `qwen` · `glm` · `ollama` · `""` (disabled) |
-| `LLM_VISION_PROVIDER` | same set as above — **defaults to `ollama`** with `qwen3-vl:8b`, which beats PaddleOCR on sheet-music lyrics and runs fully local |
-| `LLM_TEXT_MODEL` | Override the default text model for the selected provider |
-| `LLM_VISION_MODEL` | Override the default vision model for the selected provider |
-
-### Provider API keys (set only the ones you route to)
-
-| Key | Where to get |
-|---|---|
-| `OPENAI_API_KEY` | platform.openai.com |
-| `ANTHROPIC_API_KEY` | console.anthropic.com |
-| `GOOGLE_API_KEY` | makersuite.google.com / AI Studio |
-| `MINIMAX_API_KEY` | api.minimax.chat |
-| `DASHSCOPE_API_KEY` | dashscope.console.aliyun.com (Qwen) |
-| `ZHIPU_API_KEY` | open.bigmodel.cn (GLM) |
-
-### Ollama (local LLM)
-
-Local mode splits models into two roles — **text** (translation, text prompts) and **vision / OCR** (image-to-text). They're pulled separately:
-
-| Key | Default | Alternatives | Notes |
-|---|---|---|---|
-| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | — | Append `/v1` so the OpenAI SDK talks to it |
-| `OLLAMA_TEXT_MODEL` | `gemma4:e4b` | `qwen3.5:9b`, `llama3.1`, etc. | Any Ollama chat model works |
-| `OLLAMA_VISION_MODEL` | `qwen3-vl:8b` | `qwen2.5vl:7b`, `minicpm-v`, `llava` | Any Ollama vision chat model works |
-
-Pull whichever you need:
+After both workspaces are installed and `backend/.venv` exists, run from the
+repository root:
 
 ```bash
-ollama pull gemma4:e4b        # text default
-ollama pull qwen3.5:9b        # text alternative (slightly stronger CJK)
-ollama pull qwen3-vl:8b       # vision — OCR and reasoning (used by OCR page, YouTube frame filter, dedup)
+./praise.sh
 ```
 
-`qwen3-vl:8b` handles both raw OCR extraction and image reasoning (KEEP/SKIP classification for YouTube frames, dedup-by-content) in one model, which is why it's the default. Any OpenAI-compatible chat-vision model on Ollama works as a drop-in; just swap `OLLAMA_VISION_MODEL`.
+The launcher uses `backend/.venv/bin/python`, attempts to start a local
+PostgreSQL service when available, starts ports 8000 and 5173, and tails logs in
+`.dev-logs/`. `Ctrl+C` stops both development servers.
 
-#### Hardware requirements
+该脚本固定使用 `backend/.venv/bin/python`，在可用时尝试启动 PostgreSQL，并启动 8000、
+5173 端口；日志写入 `.dev-logs/`。按 `Ctrl+C` 可停止两个开发服务。
 
-Running `gemma4:e4b` (8B) and `qwen3-vl:8b` (8.8B) comfortably — i.e. first-token in a few seconds, full OCR in ~10s — needs **~10–14 GB of unified / VRAM** once both are resident. Concretely:
-
-- **Apple Silicon Mac with 16 GB+ unified memory** (M1/M2/M3/M4 — any tier)
-- **PC with an 8 GB+ discrete GPU** (RTX 3060 8 GB is the practical floor; 4070 / 4080 run noticeably faster)
-- **CPU-only works but is slow** — expect 60–120 s per OCR call on a modern x86 CPU. Fine for occasional use, painful for batch YouTube-frame workflows.
-
-If your machine doesn't hit that bar, swap `qwen3-vl:8b` for the smaller 4B sibling:
+### Persistent macOS service / macOS 常驻服务
 
 ```bash
+./scripts/morning-star-service.sh install
+```
+
+This builds the frontend and installs user-level LaunchAgents. It does not
+require `sudo` and restarts after login.
+
+```bash
+./scripts/morning-star-service.sh status
+./scripts/morning-star-service.sh restart
+./scripts/morning-star-service.sh logs
+./scripts/morning-star-service.sh stop
+./scripts/morning-star-service.sh start
+./scripts/morning-star-service.sh uninstall
+```
+
+## Configuration / 配置
+
+Copy `backend/.env.example` to `backend/.env` and configure only the services
+you use.
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection for Songs Library records |
+| `FRONTEND_URL` | Allowed frontend origin; defaults to `http://localhost:5173` |
+| `LLM_TEXT_PROVIDER` | `openai`, `anthropic`, `gemini`, `minimax`, `qwen`, `glm`, `ollama`, or empty |
+| `LLM_VISION_PROVIDER` | Provider used for OCR and image analysis |
+| `LLM_TEXT_MODEL` / `LLM_VISION_MODEL` | Optional provider-specific model overrides |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `GOOGLE_API_KEY` | Gemini API key |
+| `MINIMAX_API_KEY` | MiniMax API key |
+| `DASHSCOPE_API_KEY` | Qwen / Alibaba DashScope API key |
+| `ZHIPU_API_KEY` | GLM / Zhipu API key |
+| `OLLAMA_BASE_URL` | Ollama OpenAI-compatible endpoint, normally `http://localhost:11434/v1` |
+| `OLLAMA_TEXT_MODEL` / `OLLAMA_VISION_MODEL` | Default local text and vision models |
+| `WHISPER_MODEL` | Local speech model; defaults to `medium` |
+| `WHISPER_COMPUTE_TYPE` | Whisper compute type; defaults to `int8` |
+| `WHISPER_CPU_THREADS` / `WHISPER_NUM_WORKERS` | Local transcription concurrency controls |
+| `REMOTION_BROWSER_EXECUTABLE` | Optional absolute path to Chrome/Chromium; macOS Chrome is auto-detected |
+
+Example Ollama setup:
+
+```bash
+ollama pull qwen3.5:4b
 ollama pull qwen3-vl:4b
-# then in .env:
-# OLLAMA_VISION_MODEL=qwen3-vl:4b
 ```
 
-`qwen3-vl:4b` runs on ~6 GB of memory — workable on 8 GB Macs and 4–6 GB GPUs — at the cost of slightly weaker OCR accuracy on dense / stylized Chinese text.
+Keep `.env` out of version control. API keys never belong in commits, browser
+storage, screenshots, or issue reports.
 
-Browse other vision model options at [ollama.com/search?c=vision](https://ollama.com/search?c=vision). The app speaks OpenAI-compatible chat completions to any Ollama vision model, so it's a no-code swap.
+## Project layout / 项目结构
 
----
+```text
+.
+├── backend/
+│   ├── app/routers/       HTTP endpoints
+│   ├── app/services/      DOCX, OCR, PPT, alignment, video, and library logic
+│   ├── data/              bundled background assets
+│   └── tests/             backend and parser regression tests
+├── frontend/
+│   └── src/
+│       ├── pages/         workflow pages
+│       ├── components/    PPT, video, layout, and shared UI
+│       ├── hooks/         language, drafts, files, settings, and resume state
+│       └── utils/         cross-page handoff helpers
+├── remotion/              shared worship-video composition
+├── scripts/               local service and background maintenance scripts
+├── praise.sh              development launcher
+├── CONTRIBUTING.md        contribution workflow and standards
+├── REVIEW.md              mandatory review and smoke-test rules
+└── CLAUDE.md              architecture notes
+```
 
-## Sheet-music pipeline
+## Validation / 验证
 
-1. User uploads a sheet-music image or PDF on the Lyrics / OCR page (`POST /api/sheet/upload`). PDFs are rasterized via `pdf2image`.
-2. **homr** (in its Python 3.11 Poetry venv, called via subprocess) reads the scan and emits MusicXML. Fallback to `oemer` if homr isn't installed.
-3. **Verovio** loads the MusicXML and renders a clean SVG; `cairosvg` converts it to a PNG per Verovio page. The clean render has no scan artefacts and no printed lyrics.
-4. Classical-CV blank-band segmentation walks row-by-row across the clean PNG and splits on blank runs ≥18 rows, yielding one bounding box per visual staff system. Grand staves stay intact because Verovio's brace keeps treble+bass visually connected.
-5. Systems are distributed across the user's N lyric chunks — greedy partition when systems ≥ chunks, cyclic repeat when systems < chunks (hymnals: 3 systems cycling across 12 verses).
-6. `POST /api/sheet/analyze` writes `crop_XX.png` per chunk and returns preview URLs.
-7. PPT generation (`/api/ppt/generate` with `sheet_session_id` + `sheet_crop_names`) switches those slides to a "sheet on top, draggable lyrics textbox below, white backdrop" layout. The user fine-tunes textbox position in PowerPoint after download.
+Run all relevant checks before opening a pull request:
 
-**Why re-render instead of crop the original scan?** The user doesn't want the printed lyrics bleeding into the crop, and doesn't want scan watermarks / chord symbols on the slide. Verovio renders the notation cleanly with no lyrics attached. The tradeoff: OMR misreads (e.g. homr sometimes mis-detects fermatas as ties) become visible in the output. Phase 1.x accepts that tradeoff; a Phase 2 improvement would be to reconcile against the original pixels for accuracy.
+```bash
+cd backend
+./.venv/bin/python -m pytest -q
 
-## How the alignment pipeline works
+cd ../frontend
+npm run lint
+npm run build
 
-1. `faster-whisper` transcribes the MP3 with word-level timestamps (VAD off — music confuses the VAD).
-2. Transcript text and user lyrics are normalized and fed to a char-level `SequenceMatcher`.
-3. The matching opcodes turn into a `_CharTimeCurve`, answering "at what second does user-char *i* get sung?" for any position.
-4. Stanza occurrences in the audio are identified via a greedy char-window match, so a song written as `V/C` but sung `V/C/V/C` expands automatically.
-5. The curve + occurrence list becomes an `AudioPlan`, cached on disk under `backend/data/video_work/analyses/<id>/` so `/create` and `/rerender` share the same alignment without re-transcribing. Karaoke units are precomputed during `/analyze` and persisted too, so the editor preview and the final render never rebuild the O(n²) alignment.
+cd ../remotion
+npm run lint
+```
 
----
+The backend suite includes one live YouTube caption test. It requires internet
+access and can fail or time out when YouTube is unavailable; report that
+separately from offline test results.
 
-## Contributing / open-source notes
+Compilation is not a substitute for the smoke test required by `REVIEW.md`.
+Exercise the affected endpoint or page with realistic input and record the
+input, observed output, and one adjacent regression check in the PR body.
 
-- Secrets never go in the repo. `.env` is gitignored; CI uses GitHub Actions secrets; prod uses Google Secret Manager. The Settings UI never reads or writes API keys — it only chooses provider and model names.
-- The bundled background assets (`backend/data/backgrounds/defaults/`, ~192 MB) are committed because they're shipping defaults, not development data.
-- Adding a new LLM provider: extend `_OPENAI_COMPAT_BASE_URLS` / `DEFAULT_TEXT_MODELS` / `DEFAULT_VISION_MODELS` in `backend/app/services/llm_service.py` and add the key in `config.py`. If the provider isn't OpenAI-compatible, add a `_yourprovider_text` / `_yourprovider_vision` pair alongside the existing Anthropic / Gemini ones. Then add a row to `_PROVIDERS_META` in `backend/app/routers/llm.py` so the Settings page picks it up automatically.
-- The per-request LLM override plumbing lives in `llm_service.set_request_overrides` + the `llm_header_middleware` in `main.py`. It uses Python `contextvars` so overrides are scoped to one request and can't leak across concurrent requests — important for multi-user deployments.
+后端测试包含一个真实 YouTube 字幕用例，需要联网，并可能因 YouTube 暂时不可用而失败或
+超时。请将该结果与离线测试分开记录。编译不能代替 `REVIEW.md` 要求的功能烟雾测试；PR
+中应写明实际输入、观察结果及至少一项相邻功能验证。
 
----
+## Data, copyright, and privacy / 数据、版权与隐私
 
-## Contributing
+- Users are responsible for obtaining permission to project or distribute
+  copyrighted lyrics, sheet music, recordings, and generated media.
+- Uploaded files, generated artifacts, and analysis drafts remain local unless
+  a selected cloud model is used for the relevant OCR or translation request.
+- Browser drafts intentionally survive page navigation. Use **Clear current
+  content** to remove the active draft and its unreferenced analysis artifacts.
+- Large speech, OMR, and vision models can exceed the memory available on
+  smaller computers; select smaller models when needed.
 
-Pull requests, bug reports, and feature ideas are welcome. Please read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening a PR — it covers the dev workflow, code style, the bilingual UI-text rule, the SPDX header requirement, and how to extend the LLM provider list. For non-trivial changes, open an issue first to discuss the approach.
+- 用户应自行取得歌词、乐谱、录音投影及成品分发所需的版权许可。
+- 除非相关 OCR 或翻译请求主动选择云端模型，上传文件、成品和分析草稿均保留在本机。
+- 页面草稿会在切换页面后继续保留；使用“清除当前内容”可删除当前草稿及未被引用的分析文件。
+- 大型语音、OMR 与视觉模型可能超出小型电脑内存，请按机器配置选择较小模型。
 
----
+## Contributing / 参与贡献
 
-## License
+Read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before starting non-trivial work,
+and follow the review and smoke-test requirements in [`REVIEW.md`](./REVIEW.md).
+Architecture details for Remotion sharing, audio plans, LLM routing, and file
+cleanup are documented in [`CLAUDE.md`](./CLAUDE.md).
 
-GNU General Public License v3.0 or later (GPL-3.0-or-later). See `LICENSE` for the full text.
+开始较大改动前请阅读 [`CONTRIBUTING.md`](./CONTRIBUTING.md)，并遵守
+[`REVIEW.md`](./REVIEW.md) 的代码审查与烟雾测试要求。Remotion 共享组件、音频计划、
+模型路由和文件清理等架构说明见 [`CLAUDE.md`](./CLAUDE.md)。
+
+## License / 许可证
+
+GNU General Public License v3.0 or later (`GPL-3.0-or-later`). See
+[`LICENSE`](./LICENSE).
+
+本项目采用 GNU 通用公共许可证第三版或更高版本，完整条款见 [`LICENSE`](./LICENSE)。
 
 Copyright (C) 2026 Leo Song.
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version. This program is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
-details.

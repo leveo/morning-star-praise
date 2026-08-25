@@ -41,6 +41,7 @@ backend/data/analyses/
 
 # praise.sh runtime logs
 .dev-logs/
+.service-logs/
 
 # Vendored third-party checkouts (cloned locally per README; not mirrored)
 third_party/

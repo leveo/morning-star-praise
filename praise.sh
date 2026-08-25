@@ -8,6 +8,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+PYTHON_BIN="$ROOT/backend/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "→ backend virtual environment not found; create backend/.venv first"
+  exit 1
+fi
+
 LOG_DIR="$ROOT/.dev-logs"
 mkdir -p "$LOG_DIR"
 
@@ -82,7 +88,7 @@ kill_port 5173
 ensure_postgres
 
 echo "→ starting backend on :8000 (logs: $LOG_DIR/backend.log)"
-(cd "$ROOT/backend" && python run.py) >"$LOG_DIR/backend.log" 2>&1 &
+(cd "$ROOT/backend" && "$PYTHON_BIN" run.py) >"$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 
 echo "→ starting frontend on :5173 (logs: $LOG_DIR/frontend.log)"

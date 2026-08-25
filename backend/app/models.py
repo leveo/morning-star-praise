@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Leo Song
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 PaddingStyle = Literal["dark", "light"]
 
@@ -27,8 +27,97 @@ class LyricsParseResponse(BaseModel):
     total_slides: int
 
 
+class DocxLyricsWarning(BaseModel):
+    code: str
+    message: str
+    severity: Literal["warning", "error"] = "warning"
+    section_id: str | None = None
+
+
+class DocxLyricsSection(BaseModel):
+    id: str
+    kind: Literal["verse", "chorus"]
+    number: int | None = None
+    zh_lines: list[str] = Field(default_factory=list)
+    en_lines: list[str] = Field(default_factory=list)
+    source_fragment_ids: list[str] = Field(default_factory=list)
+    amen_zh: str | None = None
+    amen_en: str | None = None
+
+
+DocxLyricsLayoutKind = Literal[
+    "language_blocks",
+    "stanza_interleaved",
+    "line_interleaved",
+    "table_columns",
+]
+
+
+class DocxLyricsUnresolvedFragment(BaseModel):
+    id: str
+    text: str
+    location: str
+    language_guess: Literal["zh", "en", "unknown"] = "unknown"
+    reason: str
+
+
+class DocxLyricsParseCandidate(BaseModel):
+    id: str
+    layout_kind: DocxLyricsLayoutKind
+    confidence: float
+    reasons: list[str] = Field(default_factory=list)
+    sections: list[DocxLyricsSection]
+    sequence: list[str]
+    unresolved_fragments: list[DocxLyricsUnresolvedFragment] = Field(
+        default_factory=list
+    )
+    classified_fragment_count: int = 0
+    total_fragment_count: int = 0
+
+
+class DocxLyricsImportResponse(BaseModel):
+    source_filename: str
+    output_filename: str
+    song_number: str
+    title_zh: str
+    title_en: str
+    collection_zh: str
+    collection_en: str
+    sections: list[DocxLyricsSection]
+    sequence: list[str]
+    primary_lyrics: str
+    secondary_lyrics: str
+    combined_lyrics: str
+    warnings: list[DocxLyricsWarning]
+    has_blocking_errors: bool
+    layout_kind: DocxLyricsLayoutKind = "language_blocks"
+    confidence: float = 0.0
+    requires_confirmation: bool = True
+    review_confirmed: bool = False
+    candidate_layouts: list[DocxLyricsParseCandidate] = Field(default_factory=list)
+    unresolved_fragments: list[DocxLyricsUnresolvedFragment] = Field(
+        default_factory=list
+    )
+    classified_fragment_count: int = 0
+    total_fragment_count: int = 0
+    ignored_fragment_ids: list[str] = Field(default_factory=list)
+
+
+class DocxLyricsExportRequest(BaseModel):
+    source_filename: str
+    song_number: str
+    title_zh: str
+    title_en: str
+    collection_zh: str
+    collection_en: str
+    sections: list[DocxLyricsSection]
+
+
 class PPTGenerateRequest(BaseModel):
     title: str
+    title_en: str = ""
+    collection_zh: str = ""
+    collection_en: str = ""
     composer: str = ""
     slides: list[SlideData]
     language: str = "en"

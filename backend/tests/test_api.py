@@ -67,6 +67,31 @@ def test_parse_lyrics_empty():
     assert r.json()["total_slides"] == 0
 
 
+def test_parse_lyrics_preserves_eight_user_formatted_bilingual_lines():
+    lyrics = "\n".join([
+        "我們何等歡喜",
+        "因聽救主說道",
+        "我為你罪流出寶血",
+        "使你同得榮耀",
+        "I hear Thy welcome voice,",
+        "That calls me, Lord, to Thee,",
+        "For cleansing in Thy precious blood",
+        "That flowed on Calvary.",
+    ])
+
+    r = client.post("/api/lyrics/parse", json={
+        "text": lyrics,
+        "language": "zh-hant",
+        "max_lines_per_slide": 8,
+        "max_width_per_row": 20,
+    })
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total_slides"] == 1
+    assert data["slides"][0]["text"].splitlines() == lyrics.splitlines()
+
+
 # --- Chinese Conversion ---
 
 def test_convert_simplified_to_traditional():

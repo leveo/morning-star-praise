@@ -1,14 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Leo Song
-from fastapi import APIRouter
+from urllib.parse import quote
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.models import LyricsParseRequest, LyricsParseResponse
+from app.models import (
+    DocxLyricsExportRequest,
+    DocxLyricsImportResponse,
+    LyricsParseRequest,
+    LyricsParseResponse,
+)
+from app.services import docx_lyrics_service
 from app.services.lyrics_service import parse_lyrics, parse_lyrics_bilingual
 from app.services.chinese_service import convert_chinese
 from app.services.translate_service import translate_lyrics_to_english, translate_lyrics_to_chinese
 
 router = APIRouter()
+
+_MAX_DOCX_BYTES = 10 * 1024 * 1024
 
 
 class ConvertRequest(BaseModel):
@@ -27,6 +38,32 @@ class BilingualLyricsRequest(BaseModel):
     max_lines_per_slide: int = 6
     max_slides: int = 0
     max_width_per_row: int = 12
+
+
+@router.post("/import-docx", response_model=DocxLyricsImportResponse)
+async def import_docx(file: UploadFile = File(...)):
+    filename = file.filename or "lyrics.docx"
+    content = await file.read(_MAX_DOCX_BYTES + 1)
+    if len(content) > _MAX_DOCX_BYTES:
+        raise HTTPException(status_code=400, detail="DOCX 不能超过 10 MB")
+    try:
+        return docx_lyrics_service.parse_docx(content, filename)
+    except docx_lyrics_service.DocxLyricsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/export-docx")
+def export_docx(request: DocxLyricsExportRequest):
+    try:
+        content, filename = docx_lyrics_service.build_docx(request)
+    except docx_lyrics_service.DocxLyricsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    encoded = quote(filename)
+    return Response(
+        content=content,
+        media_type=docx_lyrics_service.DOCX_MIME,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
+    )
 
 
 @router.post("/parse", response_model=LyricsParseResponse)

@@ -5,7 +5,9 @@ import BackgroundPicker from '../components/ppt/BackgroundPicker';
 import FontSettings from '../components/ppt/FontSettings';
 import SlideDeck from '../components/ppt/SlideDeck';
 import UsageBadge from '../components/shared/UsageBadge';
+import ClearCurrentButton from '../components/shared/ClearCurrentButton';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { usePersistedFile } from '../hooks/usePersistedFile';
 import { useUILanguage, UI_TEXT } from '../hooks/useLanguage';
 import { useActiveLLM } from '../hooks/useActiveLLM';
 import { useTemplateDefaults } from '../hooks/useTemplateDefaults';
@@ -17,6 +19,7 @@ import {
   uploadSheet,
   analyzeSheet,
   deleteSheet,
+  getApiErrorDetail,
   type SheetCrop,
   type SheetMode,
 } from '../api/client';
@@ -33,8 +36,7 @@ export default function OcrPage() {
   const [uiLanguage] = useUILanguage();
   const t = UI_TEXT[uiLanguage].ocr;
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // File cannot be persisted — it's only meaningful while the user is on this tab
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile] = usePersistedFile('ocr.sourceFile');
   const [dragOver, setDragOver] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState('');
@@ -71,20 +73,25 @@ export default function OcrPage() {
   );
   const [selectedBgIds, setSelectedBgIds] = usePersistedState<number[]>('ocr.selectedBgIds', []);
 
-  // Transient
-  const [pages, setPages] = useState(0);
+  const [pages, setPages] = usePersistedState('ocr.pages', 0);
   interface StructuredVerse { number: number; lines: string[] }
-  const [structuredVerses, setStructuredVerses] = useState<StructuredVerse[] | null>(null);
-  const [slides, setSlides] = useState<SlideData[]>([]);
-  const [preview, setPreview] = useState<{ text: string; background_url: string }[]>([]);
-  const [filename, setFilename] = useState('');
+  const [structuredVerses, setStructuredVerses] = usePersistedState<StructuredVerse[] | null>(
+    'ocr.structuredVerses',
+    null,
+  );
+  const [slides, setSlides] = usePersistedState<SlideData[]>('ocr.slides', []);
+  const [preview, setPreview] = usePersistedState<{ text: string; background_url: string }[]>(
+    'ocr.preview',
+    [],
+  );
+  const [filename, setFilename] = usePersistedState('ocr.filename', '');
   const [generating, setGenerating] = useState(false);
   const { usage, refreshUsage } = useUsageTracker();
 
   // Sheet music pipeline — reuses the OCR file; upload runs in parallel with
   // OCR, analyze fires once we know the final chunk count.
-  const [sheetSession, setSheetSession] = useState<string | null>(null);
-  const [sheetCrops, setSheetCrops] = useState<SheetCrop[]>([]);
+  const [sheetSession, setSheetSession] = usePersistedState<string | null>('ocr.sheetSession', null);
+  const [sheetCrops, setSheetCrops] = usePersistedState<SheetCrop[]>('ocr.sheetCrops', []);
   const [sheetAnalyzing, setSheetAnalyzing] = useState(false);
   const [sheetMode, setSheetMode] = usePersistedState<SheetMode>('ocr.sheetMode', 'rebuild');
 
@@ -143,6 +150,25 @@ export default function OcrPage() {
   // earlier call from clobbering a faster later one (e.g. rebuild probe
   // landing after the user already switched to crop mode).
   const sheetAnalyzeReqIdRef = useRef(0);
+
+  const handleClearCurrentContent = () => {
+    if (sheetSession) void deleteSheet(sheetSession).catch(() => {});
+    setFile(null);
+    setTitle('');
+    setComposer('');
+    setRawLyrics('');
+    setLyrics('');
+    setPages(0);
+    setStructuredVerses(null);
+    setSlides([]);
+    setPreview([]);
+    setFilename('');
+    setSelectedBgIds([]);
+    setSheetSession(null);
+    setSheetCrops([]);
+    setError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const runSheetAnalyze = async (session: string, chunkCount: number, mode: SheetMode = sheetMode) => {
     if (chunkCount <= 0) return;
@@ -253,8 +279,8 @@ export default function OcrPage() {
           void runSheetAnalyze(sheetUploadResult.session_id, parsed.slides.length);
         }
       }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'OCR extraction failed');
+    } catch (err: unknown) {
+      setError(getApiErrorDetail(err) || 'OCR extraction failed');
     } finally {
       setExtracting(false);
       refreshUsage();
@@ -357,8 +383,16 @@ export default function OcrPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-white">{t.title}</h2>
-      <p className="text-sm text-slate-400">{t.subtitle}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white">{t.title}</h2>
+          <p className="text-sm text-slate-400">{t.subtitle}</p>
+        </div>
+        <ClearCurrentButton
+          onClick={handleClearCurrentContent}
+          disabled={extracting || generating || sheetAnalyzing}
+        />
+      </div>
 
       {/* Upload Zone */}
       {!lyrics && (
@@ -628,6 +662,29 @@ export default function OcrPage() {
   );
 }
 
+function LLMStatusPill({
+  label,
+  model,
+  configured,
+}: {
+  label: string;
+  model: string;
+  configured: boolean;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded px-2 py-0.5 border ${
+        configured ? 'border-slate-600 bg-slate-800/50 text-slate-300'
+                    : 'border-amber-700/60 bg-amber-900/20 text-amber-300'
+      }`}
+    >
+      <span className="font-medium">{label || '—'}</span>
+      {model && <span className="text-slate-500">{model}</span>}
+      {!configured && <span title="API key missing">⚠</span>}
+    </span>
+  );
+}
+
 function ActiveLLMBadge({
   activeLLM, sheetMode,
 }: {
@@ -643,34 +700,21 @@ function ActiveLLMBadge({
   const aiDetection = sheetMode === 'crop_llm';
   const same = textProvider === visionProvider && textModel === visionModel;
 
-  const Pill = ({ label, model, configured }: { label: string; model: string; configured: boolean }) => (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded px-2 py-0.5 border ${
-        configured ? 'border-slate-600 bg-slate-800/50 text-slate-300'
-                    : 'border-amber-700/60 bg-amber-900/20 text-amber-300'
-      }`}
-    >
-      <span className="font-medium">{label || '—'}</span>
-      {model && <span className="text-slate-500">{model}</span>}
-      {!configured && <span title="API key missing">⚠</span>}
-    </span>
-  );
-
   return (
     <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
       <span>当前调用模型:</span>
       {same ? (
         <>
           <span>OCR/视觉</span>
-          <Pill label={visionLabel} model={visionModel} configured={visionConfigured} />
+          <LLMStatusPill label={visionLabel} model={visionModel} configured={visionConfigured} />
         </>
       ) : (
         <>
           <span>OCR</span>
-          <Pill label={visionLabel} model={visionModel} configured={visionConfigured} />
+          <LLMStatusPill label={visionLabel} model={visionModel} configured={visionConfigured} />
           <span className="text-slate-600">·</span>
           <span>文本</span>
-          <Pill label={textLabel} model={textModel} configured={textConfigured} />
+          <LLMStatusPill label={textLabel} model={textModel} configured={textConfigured} />
         </>
       )}
       {aiDetection && (

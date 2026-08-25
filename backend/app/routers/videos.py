@@ -122,9 +122,14 @@ class VideoJobResponse(BaseModel):
 
 class AnalyzedSlide(BaseModel):
     text: str
+    # Backward-compatible aliases for the display window.
     start_sec: float
     end_sec: float
+    sung_start_sec: float
+    sung_end_sec: float
+    lead_sec: float
     stanza_idx: int
+    background_group_idx: int
 
 
 class AnalyzedStanzaOccurrence(BaseModel):
@@ -144,6 +149,44 @@ class AnalyzeResponse(BaseModel):
 
 
 ANALYSIS_ROOT = settings.VIDEO_WORK_DIR / "analyses"
+DRAFT_MARKER = ".draft.json"
+
+
+def _draft_marker_path(analysis_dir: Path) -> Path:
+    return analysis_dir / DRAFT_MARKER
+
+
+def _read_draft_outputs(analysis_dir: Path) -> set[str]:
+    try:
+        payload = json.loads(_draft_marker_path(analysis_dir).read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, OSError):
+        return set()
+    return {
+        Path(name).name
+        for name in payload.get("outputs", [])
+        if isinstance(name, str) and Path(name).name == name
+    }
+
+
+def _write_draft_outputs(analysis_dir: Path, outputs: set[str]) -> None:
+    _draft_marker_path(analysis_dir).write_text(
+        json.dumps({"outputs": sorted(outputs)}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def referenced_draft_artifacts() -> tuple[set[str], set[str]]:
+    """Return outputs and analyses explicitly retained by browser drafts."""
+    files: set[str] = set()
+    analyses: set[str] = set()
+    if not ANALYSIS_ROOT.exists():
+        return files, analyses
+    for analysis_dir in ANALYSIS_ROOT.iterdir():
+        if not analysis_dir.is_dir() or not _draft_marker_path(analysis_dir).is_file():
+            continue
+        analyses.add(analysis_dir.name)
+        files.update(_read_draft_outputs(analysis_dir))
+    return files, analyses
 
 
 @dataclass(slots=True)
@@ -159,6 +202,9 @@ class CachedAnalysis:
 class JobSpec:
     """Everything a render job needs besides the cached analysis."""
     title: str
+    title_en: str
+    collection_zh: str
+    collection_en: str
     composer: str
     background_ids: list[int] | None
     extracted_bg_paths: list[Path] | None
@@ -167,7 +213,12 @@ class JobSpec:
     primary_font_size: int | None
     secondary_font_size: int | None
     line_spacing_multiplier: float | None
+    primary_line_spacing_multiplier: float | None
+    secondary_line_spacing_multiplier: float | None
     show_page_numbers: bool
+    background_motion: bool
+    lyric_lead_seconds: float
+    show_end_slide: bool
     padding_style: str = "dark"
     bg_path_overrides: dict[int, Path] | None = None
     # Renderer cycles these crops when fewer than chunks. None disables.
@@ -217,6 +268,20 @@ def _load_cached_plan(analysis_id: str) -> CachedAnalysis:
     )
 
 
+def _save_cached_plan(cached: CachedAnalysis) -> None:
+    """Persist editor timing changes without discarding cache metadata."""
+    plan_path = cached.work_dir / "plan.json"
+    try:
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+        payload["plan"] = video_service.plan_to_dict(cached.plan)
+        plan_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not save timing changes: {exc}")
+
+
 def _progress_cb(job_id: str):
     def _cb(stage: str, percent: int) -> None:
         try:
@@ -229,33 +294,69 @@ def _progress_cb(job_id: str):
     return _cb
 
 
+def _grouped_background_paths(
+    num_lyric_slides: int,
+    background_group_indices: list[int] | None,
+    background_ids: list[int] | None,
+    extracted_bg_paths: list[Path] | None,
+) -> list[Path | None]:
+    """Return title + lyric backgrounds using the analyzed section groups."""
+    raw_indices = (
+        background_group_indices
+        if background_group_indices and len(background_group_indices) == num_lyric_slides
+        else [i // 2 for i in range(num_lyric_slides)]
+    )
+    normalized: dict[int, int] = {}
+    slide_groups: list[int] = []
+    for raw in raw_indices:
+        if raw not in normalized:
+            normalized[raw] = len(normalized)
+        slide_groups.append(normalized[raw])
+    group_count = max(1, len(normalized))
+    if extracted_bg_paths:
+        groups: list[Path | None] = [
+            extracted_bg_paths[i % len(extracted_bg_paths)]
+            for i in range(group_count)
+        ]
+    else:
+        groups = assign_backgrounds(
+            num_slides=group_count,
+            background_ids=background_ids,
+        )
+    content = [groups[group_idx % len(groups)] for group_idx in slide_groups]
+    return [content[0], *content]
+
+
 def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
     try:
         plan = cached.plan
         if not plan.lyric_chunks:
             raise ValueError("Analysis has no slides — re-run Analyze Audio")
 
-        num_bg_slots = len(plan.lyric_chunks) + 1
-        if spec.extracted_bg_paths:
-            bg_paths: list[Path | None] = [
-                spec.extracted_bg_paths[i % len(spec.extracted_bg_paths)]
-                for i in range(num_bg_slots)
-            ]
-        else:
-            bg_paths = assign_backgrounds(
-                num_slides=num_bg_slots,
-                background_ids=spec.background_ids,
-            )
+        bg_paths = _grouped_background_paths(
+            num_lyric_slides=len(plan.lyric_chunks),
+            background_group_indices=plan.chunk_background_group,
+            background_ids=spec.background_ids,
+            extracted_bg_paths=spec.extracted_bg_paths,
+        )
 
+        has_title_background_override = bool(
+            spec.bg_path_overrides and 0 in spec.bg_path_overrides
+        )
         if spec.bg_path_overrides:
             for idx, override_path in spec.bg_path_overrides.items():
                 if 0 <= idx < len(bg_paths):
                     bg_paths[idx] = override_path
+        if not has_title_background_override and len(bg_paths) > 1:
+            bg_paths[0] = bg_paths[1]
 
         video_path, srt_path = video_service.build_video_from_plan(
             audio_path=cached.audio_path,
             plan=plan,
             title=spec.title,
+            title_en=spec.title_en,
+            collection_zh=spec.collection_zh,
+            collection_en=spec.collection_en,
             composer=spec.composer,
             background_paths=bg_paths,
             output_dir=settings.OUTPUT_DIR,
@@ -266,9 +367,14 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             primary_font_size=spec.primary_font_size,
             secondary_font_size=spec.secondary_font_size,
             line_spacing_multiplier=spec.line_spacing_multiplier,
+            primary_line_spacing_multiplier=spec.primary_line_spacing_multiplier,
+            secondary_line_spacing_multiplier=spec.secondary_line_spacing_multiplier,
             show_page_numbers=spec.show_page_numbers,
             padding_style=spec.padding_style,
             sheet_crop_paths=spec.sheet_crop_paths,
+            background_motion=spec.background_motion,
+            lyric_lead_seconds=spec.lyric_lead_seconds,
+            show_end_slide=spec.show_end_slide,
         )
 
         video_job_service.update_job(
@@ -279,6 +385,9 @@ def _run_job_sync(job_id: str, cached: CachedAnalysis, spec: JobSpec) -> None:
             video_filename=video_path.name,
             srt_filename=srt_path.name,
         )
+        draft_outputs = _read_draft_outputs(cached.work_dir)
+        draft_outputs.update({video_path.name, srt_path.name})
+        _write_draft_outputs(cached.work_dir, draft_outputs)
 
         if spec.library_snapshot is not None:
             from app.services import library_service
@@ -339,6 +448,10 @@ def _analyze_sync(
         timed_chunks=timed,
     )
     stanza_idx_by_chunk = plan.chunk_stanza_idx or [-1] * len(plan.lyric_chunks)
+    background_group_by_chunk = (
+        plan.chunk_background_group
+        or [i // 2 for i in range(len(plan.lyric_chunks))]
+    )
 
     slides_payload: list[AnalyzedSlide] = []
     for i, tc in enumerate(timed):
@@ -347,7 +460,19 @@ def _analyze_sync(
                 text=tc.text,
                 start_sec=float(tc.start),
                 end_sec=float(tc.end),
+                sung_start_sec=float(
+                    tc.sung_start if tc.sung_start is not None else tc.start
+                ),
+                sung_end_sec=float(
+                    tc.sung_end if tc.sung_end is not None else tc.end
+                ),
+                lead_sec=float(tc.lead),
                 stanza_idx=int(stanza_idx_by_chunk[i]) if i < len(stanza_idx_by_chunk) else -1,
+                background_group_idx=(
+                    int(background_group_by_chunk[i])
+                    if i < len(background_group_by_chunk)
+                    else i // 2
+                ),
             )
         )
 
@@ -359,6 +484,7 @@ def _analyze_sync(
     (analysis_dir / "plan.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )
+    _write_draft_outputs(analysis_dir, set())
 
     return AnalyzeResponse(
         analysis_id=analysis_dir.name,
@@ -429,10 +555,35 @@ async def analyze_audio_endpoint(
     return response
 
 
+@router.delete("/analyses/{analysis_id}")
+def clear_analysis_draft(analysis_id: str):
+    analysis_dir = _analysis_dir(analysis_id)
+    if not analysis_dir.exists():
+        return {"cleared": True}
+
+    from app.services import library_service
+
+    protected_files, protected_analyses = library_service.referenced_artifacts()
+    draft_outputs = _read_draft_outputs(analysis_dir)
+    for filename in draft_outputs - protected_files:
+        output_path = (settings.OUTPUT_DIR / filename).resolve()
+        if output_path.is_relative_to(settings.OUTPUT_DIR.resolve()):
+            output_path.unlink(missing_ok=True)
+
+    if analysis_id in protected_analyses:
+        _draft_marker_path(analysis_dir).unlink(missing_ok=True)
+    else:
+        shutil.rmtree(analysis_dir, ignore_errors=True)
+    return {"cleared": True}
+
+
 @router.post("/create", response_model=VideoJobResponse)
 async def create_video(
     analysis_id: str = Form(...),
     title: str = Form(""),
+    title_en: str = Form(""),
+    collection_zh: str = Form(""),
+    collection_en: str = Form(""),
     composer: str = Form(""),
     background_ids: str = Form(""),
     extracted_background_paths: str = Form(""),
@@ -440,7 +591,12 @@ async def create_video(
     primary_font_size: int | None = Form(None),
     secondary_font_size: int | None = Form(None),
     line_spacing_multiplier: float | None = Form(None),
+    primary_line_spacing_multiplier: float | None = Form(None),
+    secondary_line_spacing_multiplier: float | None = Form(None),
     show_page_numbers: bool = Form(False),
+    background_motion: bool = Form(False),
+    lyric_lead_seconds: float = Form(video_service.DEFAULT_LYRIC_LEAD_SEC),
+    show_end_slide: bool = Form(False),
     padding_style: str = Form("dark"),
     input_snapshot: str = Form(""),
     sheet_session_id: str = Form(""),
@@ -488,6 +644,9 @@ async def create_video(
 
     spec = JobSpec(
         title=title,
+        title_en=title_en,
+        collection_zh=collection_zh,
+        collection_en=collection_en,
         composer=composer,
         background_ids=bg_ids,
         extracted_bg_paths=extracted_bg_paths,
@@ -496,7 +655,20 @@ async def create_video(
         primary_font_size=primary_font_size,
         secondary_font_size=secondary_font_size,
         line_spacing_multiplier=line_spacing_multiplier,
+        primary_line_spacing_multiplier=(
+            primary_line_spacing_multiplier
+            if primary_line_spacing_multiplier is not None
+            else line_spacing_multiplier
+        ),
+        secondary_line_spacing_multiplier=(
+            secondary_line_spacing_multiplier
+            if secondary_line_spacing_multiplier is not None
+            else line_spacing_multiplier
+        ),
         show_page_numbers=show_page_numbers,
+        background_motion=background_motion,
+        lyric_lead_seconds=max(0.0, min(float(lyric_lead_seconds), 30.0)),
+        show_end_slide=show_end_slide,
         padding_style=padding_style if padding_style in ("dark", "light") else "dark",
         sheet_crop_paths=sheet_crop_paths,
         analysis_id=analysis_id,
@@ -650,8 +822,11 @@ def get_analysis_audio(analysis_id: str):
 
 class TimingOverride(BaseModel):
     idx: int
-    start_sec: float
-    end_sec: float
+    # New clients edit the actual sung cue. start/end remain accepted for
+    # cached clients that used the old display-window editor.
+    sung_start_sec: float | None = None
+    start_sec: float | None = None
+    end_sec: float | None = None
 
 
 class BackgroundOverride(BaseModel):
@@ -662,6 +837,9 @@ class BackgroundOverride(BaseModel):
 class RerenderRequest(BaseModel):
     analysis_id: str
     title: str = ""
+    title_en: str = ""
+    collection_zh: str = ""
+    collection_en: str = ""
     composer: str = ""
     background_ids: list[int] | None = None
     extracted_background_paths: list[str] | None = None
@@ -669,7 +847,12 @@ class RerenderRequest(BaseModel):
     primary_font_size: int | None = None
     secondary_font_size: int | None = None
     line_spacing_multiplier: float | None = None
+    primary_line_spacing_multiplier: float | None = None
+    secondary_line_spacing_multiplier: float | None = None
     show_page_numbers: bool = False
+    background_motion: bool = False
+    lyric_lead_seconds: float = video_service.DEFAULT_LYRIC_LEAD_SEC
+    show_end_slide: bool = False
     padding_style: PaddingStyle = "dark"
     timing_overrides: list[TimingOverride] = []
     background_overrides: list[BackgroundOverride] = []
@@ -683,21 +866,19 @@ async def rerender_video(req: RerenderRequest):
     cached = _load_cached_plan(req.analysis_id)
 
     if req.timing_overrides:
-        timed = list(cached.plan.timed)
+        sung_overrides: dict[int, float] = {}
         for ov in req.timing_overrides:
-            if 0 <= ov.idx < len(timed):
-                timed[ov.idx] = video_service.TimedChunk(
-                    text=timed[ov.idx].text,
-                    start=float(ov.start_sec),
-                    end=float(ov.end_sec),
-                )
-        # Re-enforce the chunk[i].end == chunk[i+1].start invariant so
-        # Remotion sequences still crossfade back-to-back.
-        for i in range(len(timed) - 1):
-            timed[i].end = timed[i + 1].start
-        cached.plan.timed = timed
-        # Overrides moved chunk windows — cached units are stale, force recompute.
-        cached.plan.karaoke_units = []
+            requested = ov.sung_start_sec
+            if requested is None:
+                requested = ov.start_sec
+            if requested is not None:
+                sung_overrides[ov.idx] = float(requested)
+        video_service.apply_sung_start_overrides(
+            cached.plan,
+            sung_overrides,
+            lead_sec=req.lyric_lead_seconds,
+        )
+        _save_cached_plan(cached)
 
     extracted_bg_paths: list[Path] | None = None
     if req.extracted_background_paths:
@@ -714,8 +895,8 @@ async def rerender_video(req: RerenderRequest):
         if resolved_sheet:
             sheet_crop_paths = resolved_sheet
 
-    # Editor's ``idx`` is the lyric chunk index (0..N-1). ``bg_paths`` index 0
-    # is the title slide, so chunk-level overrides shift by +1.
+    # Editor ``idx=-1`` targets the title; ``idx=0..N-1`` targets lyric chunks.
+    # ``bg_paths`` index 0 is the title, so every editor index shifts by +1.
     bg_path_overrides: dict[int, Path] | None = None
     override_ids = {ov.background_id for ov in req.background_overrides if ov.background_id is not None}
     if override_ids:
@@ -734,6 +915,9 @@ async def rerender_video(req: RerenderRequest):
 
     spec = JobSpec(
         title=req.title,
+        title_en=req.title_en,
+        collection_zh=req.collection_zh,
+        collection_en=req.collection_en,
         composer=req.composer,
         background_ids=req.background_ids,
         extracted_bg_paths=extracted_bg_paths,
@@ -742,7 +926,20 @@ async def rerender_video(req: RerenderRequest):
         primary_font_size=req.primary_font_size,
         secondary_font_size=req.secondary_font_size,
         line_spacing_multiplier=req.line_spacing_multiplier,
+        primary_line_spacing_multiplier=(
+            req.primary_line_spacing_multiplier
+            if req.primary_line_spacing_multiplier is not None
+            else req.line_spacing_multiplier
+        ),
+        secondary_line_spacing_multiplier=(
+            req.secondary_line_spacing_multiplier
+            if req.secondary_line_spacing_multiplier is not None
+            else req.line_spacing_multiplier
+        ),
         show_page_numbers=req.show_page_numbers,
+        background_motion=req.background_motion,
+        lyric_lead_seconds=max(0.0, min(float(req.lyric_lead_seconds), 30.0)),
+        show_end_slide=req.show_end_slide,
         padding_style=req.padding_style,
         sheet_crop_paths=sheet_crop_paths,
         bg_path_overrides=bg_path_overrides,

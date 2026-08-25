@@ -4,6 +4,7 @@ import "./index.css";
 import type { CalculateMetadataFunction } from "remotion";
 import { Composition } from "remotion";
 import {
+  END_SLIDE_DURATION_SEC,
   WorshipVideo,
   worshipVideoSchema,
   type WorshipVideoProps,
@@ -18,7 +19,14 @@ const calculateMetadata: CalculateMetadataFunction<WorshipVideoProps> = ({
 }) => {
   const durationInFrames = Math.max(
     1,
-    Math.ceil(props.audioDurationSec * VIDEO_FPS),
+    Math.ceil(
+      (
+        props.audioDurationSec
+        + (props.showEndSlide
+          ? (props.endSlideDurationSec ?? END_SLIDE_DURATION_SEC)
+          : 0)
+      ) * VIDEO_FPS,
+    ),
   );
   return { durationInFrames };
 };
